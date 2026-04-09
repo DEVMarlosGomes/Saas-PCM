@@ -1,0 +1,71 @@
+{
+  "theme": "light_and_dark",
+  "archetype": "Archetype 4 (Swiss & High-Contrast)",
+  "typography": {
+    "headings": "Outfit",
+    "body": "Inter",
+    "notes": "Use tight tracking (tracking-tight) for headings. Inter for body text with normal tracking. Banned: Inter for headings. Banned: Space Grotesk."
+  },
+  "colors": {
+    "light": {
+      "background": "#FFFFFF",
+      "surface": "#F8FAFC",
+      "primary": "#2563EB",
+      "accent": "#E63946",
+      "text": "#0F172A",
+      "border": "#E2E8F0"
+    },
+    "dark": {
+      "background": "#0A0A0A",
+      "surface": "#171717",
+      "primary": "#3B82F6",
+      "accent": "#EF4444",
+      "text": "#F8FAFC",
+      "border": "#262626"
+    },
+    "rules": "Tinted Grey Rule: Never use pure #000000 or #808080. Always tint neutral greys slightly. Banned: Teal green/blue (#1B93A4) for dashboards. Banned: Purple-blue gradients."
+  },
+  "layout": {
+    "grid": "Control Room Grid (grid-cols-1 md:grid-cols-3 lg:grid-cols-4, gap-4 or gap-6)",
+    "spacing": "Dense and compact padding (p-4 or p-6) for data-heavy dashboard cards.",
+    "border_radius": "rounded-sm",
+    "surfaces": "Grid Borders or Flat Backgrounds. Avoid heavy glassmorphism for health/maintenance apps; prefer flat solid surfaces with 1px borders."
+  },
+  "components": {
+    "strategy": "Shadcn UI heavily customized with strict 1px borders and minimal border radius (rounded-none or rounded-sm). Do not overuse the default 'Card' look. Go for a cardless, dense style.",
+    "charts": "Shadcn charts (Recharts) for Pareto, MTTR, MTBF.",
+    "icons": "lucide-react"
+  },
+  "media": {
+    "images": [
+      {
+        "category": "login_background",
+        "url": "https://static.prod-images.emergentagent.com/jobs/277eff2b-7ed2-44c4-a9ed-8edae04f3ac8/images/d742918958cc5d7f35e06b559dcbe116dcc0c450be2fd9c12f1287a834009065.png",
+        "description": "Abstract geometric industrial background, minimalist, high contrast, clean and professional. Use for authentication/login screens."
+      },
+      {
+        "category": "industrial_facility_placeholder",
+        "url": "https://images.unsplash.com/photo-1771530789155-b1f03fbf82b5?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODl8MHwxfHNlYXJjaHwzfHxtb2Rlcm4lMjBpbmR1c3RyaWFsJTIwZmFjaWxpdHl8ZW58MHx8fHwxNzc1NzU4MjUzfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Empty modern warehouse interior with polished concrete floor. Use for empty states, landing pages, or organization creation screens."
+      }
+    ]
+  },
+  "accessibility": {
+    "contrast": "Ensure text meets APCA or WCAG AA standards against all backgrounds.",
+    "focus_states": "Must have HIGHER contrast than default state (e.g., focus:ring-2).",
+    "testing": "All interactive and key informational elements MUST include a data-testid attribute in kebab-case format (e.g., data-testid=\"login-submit-button\")."
+  },
+  "instructions_to_main_agent": [
+    "Import 'Outfit' and 'Inter' from Google Fonts and set them up in tailwind.config.js.",
+    "Apply 'Control Room' grid rules to Dashboard KPIs and feature cards.",
+    "Implement light and dark mode toggling across the entire SaaS.",
+    "Use pure HTML + Tailwind for structural layouts, and customized Shadcn for interactive logic.",
+    "Avoid the standard 'Bootstrap' or 'Default Vercel' look. Opt for a Swiss Brutalist/High-Contrast aesthetic.",
+    "Ensure 'rounded-sm' or 'rounded-none' is strictly used instead of default large radii.",
+    "Follow 'Grid Borders' style for data tables, lists, and forms.",
+    "Ensure navigation links are visible on desktop (no hidden hamburger menus).",
+    "Always use data-testid for buttons, inputs, links, forms.",
+    "Do not use transparent backgrounds for sticky headers; use solid or blurred solid backgrounds.",
+    "Limit the use of primary colors to main CTAs and active states only."
+  ]
+}
