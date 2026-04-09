@@ -91,20 +91,17 @@ export default function DashboardPage() {
 
   const loadData = async () => {
     setLoading(true);
-    console.log("Loading dashboard data...");
     try {
       const [kpisRes, backlogRes] = await Promise.all([
         getDashboardKPIs(),
         getBacklog()
       ]);
-      console.log("Dashboard data loaded:", kpisRes.data, backlogRes.data);
       setKpis(kpisRes.data);
       setBacklog(backlogRes.data);
     } catch (error) {
       console.error("Error loading dashboard:", error);
       toast.error("Erro ao carregar dashboard");
     } finally {
-      console.log("Setting loading to false");
       setLoading(false);
     }
   };

@@ -52,8 +52,8 @@ export default function OrdensServicoPage() {
   const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterTipo, setFilterTipo] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterTipo, setFilterTipo] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailDialog, setDetailDialog] = useState({ open: false, os: null, custos: [] });
   const [custoDialog, setCustoDialog] = useState({ open: false, os_id: null });
@@ -82,15 +82,21 @@ export default function OrdensServicoPage() {
   const loadData = async () => {
     setLoading(true);
     try {
+      const params = {};
+      if (filterStatus && filterStatus !== "all") params.status = filterStatus;
+      if (filterTipo && filterTipo !== "all") params.tipo = filterTipo;
+      
       const [osRes, eqRes, grRes] = await Promise.all([
-        getOrdensServico({ status: filterStatus || undefined, tipo: filterTipo || undefined }),
+        getOrdensServico(params),
         getEquipamentos(),
         getGrupos()
       ]);
-      setOrdens(osRes.data);
-      setEquipamentos(eqRes.data);
-      setGrupos(grRes.data);
+      console.log("OS data loaded:", osRes.data?.length, "orders");
+      setOrdens(osRes.data || []);
+      setEquipamentos(eqRes.data || []);
+      setGrupos(grRes.data || []);
     } catch (error) {
+      console.error("Error loading OS:", error);
       toast.error("Erro ao carregar ordens de serviço");
     } finally {
       setLoading(false);
@@ -335,7 +341,7 @@ export default function OrdensServicoPage() {
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Todos</SelectItem>
+            <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="aberta">Aberta</SelectItem>
             <SelectItem value="em_atendimento">Em Atendimento</SelectItem>
             <SelectItem value="aguardando_revisao">Aguardando Revisão</SelectItem>
@@ -348,7 +354,7 @@ export default function OrdensServicoPage() {
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Todos</SelectItem>
+            <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="corretiva">Corretiva</SelectItem>
             <SelectItem value="preventiva">Preventiva</SelectItem>
             <SelectItem value="preditiva">Preditiva</SelectItem>

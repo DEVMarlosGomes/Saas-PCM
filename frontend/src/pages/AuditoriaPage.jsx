@@ -30,12 +30,14 @@ const entidadeLabels = {
 export default function AuditoriaPage() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filterEntidade, setFilterEntidade] = useState("");
+  const [filterEntidade, setFilterEntidade] = useState("all");
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await getAuditoria({ entidade: filterEntidade || undefined, limit: 100 });
+      const params = { limit: 100 };
+      if (filterEntidade && filterEntidade !== "all") params.entidade = filterEntidade;
+      const res = await getAuditoria(params);
       setLogs(res.data);
     } catch (error) {
       toast.error("Erro ao carregar auditoria");
@@ -63,7 +65,7 @@ export default function AuditoriaPage() {
               <SelectValue placeholder="Filtrar por tipo" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Todos</SelectItem>
+              <SelectItem value="all">Todos</SelectItem>
               <SelectItem value="equipamento">Equipamento</SelectItem>
               <SelectItem value="ordem_servico">Ordem de Serviço</SelectItem>
               <SelectItem value="usuario">Usuário</SelectItem>
