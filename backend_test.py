@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 
 class PCMAPITester:
-    def __init__(self, base_url: str = "https://asset-control-53.preview.emergentagent.com"):
+    def __init__(self, base_url: str = "https://saas-multi-tenant-2.preview.emergentagent.com"):
         self.base_url = base_url
         self.token = None
         self.user_data = None
