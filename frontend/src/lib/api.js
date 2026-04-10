@@ -43,7 +43,10 @@ api.interceptors.response.use(
         if (!window.location.pathname.includes('/login')) {
           localStorage.removeItem('pcm_user');
           localStorage.removeItem('pcm_token');
-          window.location.href = '/login';
+          // Use setTimeout to allow pending promises/finally blocks to settle
+          setTimeout(() => {
+            window.location.href = '/login';
+          }, 100);
         }
         return Promise.reject(refreshError);
       }
