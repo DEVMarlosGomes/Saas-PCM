@@ -155,11 +155,11 @@ export default function DashboardPage() {
       const [kpisRes, backlogRes, billingRes] = await Promise.all([
         getDashboardKPIs(),
         getBacklog(),
-        getBillingPlan().catch(() => null),
+        getBillingPlan().catch(() => ({ data: null })),
       ]);
-      setKpis(kpisRes.data);
-      setBacklog(backlogRes.data);
-      if (billingRes) setBilling(billingRes.data);
+      setKpis(kpisRes.data || null);
+      setBacklog(backlogRes.data || null);
+      if (billingRes && billingRes.data) setBilling(billingRes.data);
     } catch (error) {
       console.error("Error loading dashboard:", error);
       toast.error("Erro ao carregar dashboard");
@@ -196,6 +196,15 @@ export default function DashboardPage() {
           <RefreshCw className="h-6 w-6 animate-spin text-primary" />
           <span className="text-sm text-muted-foreground">Carregando indicadores...</span>
         </div>
+      </div>
+    );
+  }
+
+  if (!kpis) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <span className="text-muted-foreground">Nenhum dado disponível</span>
+        <Button onClick={loadData}>Tentar novamente</Button>
       </div>
     );
   }
