@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { getDashboardKPIs, getBacklog, seedDemo } from "../lib/api";
+import { getDashboardKPIs, getBacklog, seedDemo, getBillingPlan } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import {
   Activity,
   Clock,
@@ -11,10 +12,15 @@ import {
   TrendingDown,
   Wrench,
   Timer,
-  CheckCircle,
   XCircle,
   RefreshCw,
-  Database
+  Database,
+  Gauge,
+  ArrowUpRight,
+  Zap,
+  BarChart3,
+  ChevronRight,
+  ArrowDownRight,
 } from "lucide-react";
 import {
   BarChart,
@@ -27,58 +33,110 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend
+  Legend,
+  AreaChart,
+  Area,
 } from "recharts";
 
-const COLORS = ["hsl(217, 91%, 60%)", "hsl(0, 72%, 51%)", "hsl(142, 71%, 45%)", "hsl(38, 92%, 50%)"];
+const COLORS = {
+  primary: "hsl(217, 91%, 60%)",
+  danger: "hsl(0, 72%, 51%)",
+  success: "hsl(142, 71%, 45%)",
+  warning: "hsl(38, 92%, 50%)",
+  purple: "hsl(262, 83%, 58%)",
+};
 
-function KPICard({ title, value, subtitle, icon: Icon, trend, color = "primary" }) {
+function MetricCard({ title, value, subtitle, icon: Icon, color = "primary", trend }) {
+  const colorMap = {
+    primary: "bg-blue-500/10 text-blue-500",
+    danger: "bg-red-500/10 text-red-500",
+    success: "bg-emerald-500/10 text-emerald-500",
+    warning: "bg-amber-500/10 text-amber-500",
+    purple: "bg-purple-500/10 text-purple-500",
+  };
+
   return (
-    <div className="border border-border bg-card p-4 rounded-sm" data-testid={`kpi-${title.toLowerCase().replace(/\s/g, '-')}`}>
+    <div className="group border border-border bg-card rounded-lg p-5 hover:border-primary/30 transition-all">
       <div className="flex items-start justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">{title}</p>
-          <p className="text-2xl font-heading font-bold mt-1">{value}</p>
-          {subtitle && <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>}
+        <div className="flex-1">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</p>
+          <p className="text-3xl font-bold font-heading mt-2 leading-none">{value}</p>
+          {subtitle && (
+            <p className="text-xs text-muted-foreground mt-2">{subtitle}</p>
+          )}
         </div>
-        <div className={`p-2 rounded-sm bg-${color}/10`}>
-          <Icon className={`h-5 w-5 text-${color}`} />
+        <div className={`p-2.5 rounded-lg ${colorMap[color] || colorMap.primary}`}>
+          <Icon className="h-5 w-5" />
         </div>
       </div>
-      {trend !== undefined && (
-        <div className="flex items-center gap-1 mt-2 text-xs">
+      {trend !== undefined && trend !== null && (
+        <div className="flex items-center gap-1 mt-3 pt-3 border-t border-border/50">
           {trend >= 0 ? (
-            <TrendingUp className="h-3 w-3 text-green-500" />
+            <ArrowUpRight className="h-3.5 w-3.5 text-emerald-500" />
           ) : (
-            <TrendingDown className="h-3 w-3 text-red-500" />
+            <ArrowDownRight className="h-3.5 w-3.5 text-red-500" />
           )}
-          <span className={trend >= 0 ? "text-green-500" : "text-red-500"}>
+          <span className={`text-xs font-semibold ${trend >= 0 ? "text-emerald-500" : "text-red-500"}`}>
             {Math.abs(trend)}%
           </span>
-          <span className="text-muted-foreground">vs mês anterior</span>
+          <span className="text-xs text-muted-foreground">vs mês anterior</span>
         </div>
       )}
     </div>
   );
 }
 
-function BacklogCard({ title, value, icon: Icon, status }) {
-  const statusColors = {
-    warning: "text-yellow-500 bg-yellow-500/10",
-    danger: "text-red-500 bg-red-500/10",
-    info: "text-blue-500 bg-blue-500/10",
-    success: "text-green-500 bg-green-500/10"
+function StatusBadge({ value, label, color }) {
+  const colorMap = {
+    warning: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+    danger: "bg-red-500/10 text-red-600 border-red-500/20",
+    info: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+    success: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
   };
-  
+
   return (
-    <div className="flex items-center gap-3 p-3 border border-border rounded-sm" data-testid={`backlog-${title.toLowerCase().replace(/\s/g, '-')}`}>
-      <div className={`p-2 rounded-sm ${statusColors[status]}`}>
-        <Icon className="h-4 w-4" />
+    <div className={`flex flex-col items-center justify-center p-4 rounded-lg border ${colorMap[color]}`}>
+      <span className="text-2xl font-bold font-heading">{value}</span>
+      <span className="text-xs font-medium mt-1">{label}</span>
+    </div>
+  );
+}
+
+function RankingList({ title, items, valueLabel, valueFormatter, icon: Icon, emptyMsg }) {
+  return (
+    <div className="border border-border rounded-lg bg-card">
+      <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
+        <Icon className="h-5 w-5 text-primary" />
+        <h3 className="font-heading font-semibold">{title}</h3>
       </div>
-      <div>
-        <p className="text-sm text-muted-foreground">{title}</p>
-        <p className="text-xl font-heading font-bold">{value}</p>
-      </div>
+      {items && items.length > 0 ? (
+        <div className="divide-y divide-border/50">
+          {items.map((item, idx) => (
+            <div key={idx} className="flex items-center justify-between px-5 py-3 hover:bg-muted/30 transition-colors">
+              <div className="flex items-center gap-3">
+                <span className={`flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+                  idx === 0 ? 'bg-red-500/10 text-red-500' : 
+                  idx === 1 ? 'bg-amber-500/10 text-amber-500' : 
+                  'bg-muted text-muted-foreground'
+                }`}>
+                  {idx + 1}
+                </span>
+                <div>
+                  <p className="text-sm font-medium">{item.nome}</p>
+                  <p className="text-xs text-muted-foreground">{item.codigo}</p>
+                </div>
+              </div>
+              <span className="text-sm font-semibold font-mono">
+                {valueFormatter ? valueFormatter(item) : item.total}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+          {emptyMsg || "Sem dados"}
+        </div>
+      )}
     </div>
   );
 }
@@ -86,18 +144,22 @@ function BacklogCard({ title, value, icon: Icon, status }) {
 export default function DashboardPage() {
   const [kpis, setKpis] = useState(null);
   const [backlog, setBacklog] = useState(null);
+  const [billing, setBilling] = useState(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
+  const navigate = useNavigate();
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [kpisRes, backlogRes] = await Promise.all([
+      const [kpisRes, backlogRes, billingRes] = await Promise.all([
         getDashboardKPIs(),
-        getBacklog()
+        getBacklog(),
+        getBillingPlan().catch(() => null),
       ]);
       setKpis(kpisRes.data);
       setBacklog(backlogRes.data);
+      if (billingRes) setBilling(billingRes.data);
     } catch (error) {
       console.error("Error loading dashboard:", error);
       toast.error("Erro ao carregar dashboard");
@@ -130,7 +192,10 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+          <span className="text-sm text-muted-foreground">Carregando indicadores...</span>
+        </div>
       </div>
     );
   }
@@ -140,13 +205,23 @@ export default function DashboardPage() {
     { name: "Corretiva", value: kpis.preventiva_vs_corretiva.corretiva }
   ] : [];
 
+  const totalPie = (pieData[0]?.value || 0) + (pieData[1]?.value || 0);
+  const prevPercent = totalPie > 0 ? Math.round((pieData[0]?.value / totalPie) * 100) : 0;
+
+  // Plan usage warning
+  const showPlanWarning = billing && billing.usage_percent && (
+    billing.usage_percent.equipamentos >= 80 || 
+    billing.usage_percent.users >= 80 || 
+    billing.usage_percent.os_mes >= 80
+  );
+
   return (
     <div className="space-y-6" data-testid="dashboard-page">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="font-heading text-2xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Visão geral da manutenção</p>
+          <h1 className="font-heading text-2xl font-bold">Inteligência de Manutenção</h1>
+          <p className="text-muted-foreground text-sm">Indicadores estratégicos para decisão rápida</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={loadData} data-testid="refresh-btn">
@@ -160,162 +235,212 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* KPIs Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard
-          title="OS do Mês"
-          value={kpis?.total_os_mes || 0}
-          icon={Wrench}
-          color="primary"
-        />
-        <KPICard
+      {/* Plan Warning Banner */}
+      {showPlanWarning && (
+        <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/20 rounded-lg px-5 py-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
+              Você está próximo do limite do plano {billing?.plano?.toUpperCase()}
+            </span>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => navigate('/billing')} className="text-amber-700 border-amber-500/30">
+            <Zap className="h-4 w-4 mr-1" />
+            Fazer Upgrade
+          </Button>
+        </div>
+      )}
+
+      {/* Main KPIs - "5 second" metrics */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
           title="Disponibilidade"
           value={`${kpis?.disponibilidade?.toFixed(1) || 0}%`}
-          icon={Activity}
-          color="primary"
+          subtitle={kpis?.disponibilidade >= 95 ? "Excelente" : kpis?.disponibilidade >= 85 ? "Atenção necessária" : "Crítico"}
+          icon={Gauge}
+          color={kpis?.disponibilidade >= 95 ? "success" : kpis?.disponibilidade >= 85 ? "warning" : "danger"}
         />
-        <KPICard
+        <MetricCard
           title="MTTR"
           value={`${kpis?.mttr?.toFixed(1) || 0}h`}
           subtitle="Tempo médio de reparo"
           icon={Timer}
           color="primary"
         />
-        <KPICard
+        <MetricCard
           title="MTBF"
           value={`${kpis?.mtbf?.toFixed(0) || 0}h`}
           subtitle="Tempo entre falhas"
-          icon={Clock}
-          color="primary"
+          icon={Activity}
+          color="purple"
+        />
+        <MetricCard
+          title="Custo Total"
+          value={`R$ ${(kpis?.custo_total_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
+          subtitle="Manutenção este mês"
+          icon={DollarSign}
+          color="warning"
         />
       </div>
 
-      {/* Backlog */}
-      <div className="border border-border rounded-sm p-4 bg-card">
-        <h2 className="font-heading font-semibold mb-4">Backlog de OS</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <BacklogCard
-            title="Abertas"
-            value={backlog?.abertas || 0}
-            icon={AlertTriangle}
-            status="warning"
-          />
-          <BacklogCard
-            title="Em Atendimento"
-            value={backlog?.em_atendimento || 0}
-            icon={Wrench}
-            status="info"
-          />
-          <BacklogCard
-            title="Aguardando Revisão"
-            value={backlog?.aguardando_revisao || 0}
-            icon={Clock}
-            status="info"
-          />
-          <BacklogCard
-            title="Atrasadas"
-            value={backlog?.atrasadas || 0}
-            icon={XCircle}
-            status="danger"
-          />
+      {/* Second row - Operational metrics */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
+          title="OS do Mês"
+          value={kpis?.total_os_mes || 0}
+          icon={Wrench}
+          color="primary"
+        />
+        <MetricCard
+          title="Tempo Resposta"
+          value={`${kpis?.avg_tempo_resposta?.toFixed(0) || 0} min`}
+          subtitle="Média de resposta"
+          icon={Clock}
+          color="primary"
+        />
+        <MetricCard
+          title="Fora do SLA"
+          value={kpis?.os_atrasadas || 0}
+          subtitle={kpis?.os_atrasadas > 0 ? "Requer atenção" : "Dentro do padrão"}
+          icon={AlertTriangle}
+          color={kpis?.os_atrasadas > 0 ? "danger" : "success"}
+        />
+        <MetricCard
+          title="Custo de Parada"
+          value={`R$ ${(kpis?.custo_parada_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
+          subtitle="Máquina parada este mês"
+          icon={TrendingDown}
+          color="danger"
+        />
+      </div>
+
+      {/* Backlog Status */}
+      <div className="border border-border rounded-lg bg-card overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h2 className="font-heading font-semibold flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-primary" />
+            Status do Backlog
+          </h2>
+          <span className="text-sm font-semibold text-muted-foreground">
+            {backlog?.total_pendentes || 0} pendentes
+          </span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-border">
+          <StatusBadge value={backlog?.abertas || 0} label="Abertas" color="warning" />
+          <StatusBadge value={backlog?.em_atendimento || 0} label="Em Atendimento" color="info" />
+          <StatusBadge value={backlog?.aguardando_revisao || 0} label="Ag. Revisão" color="info" />
+          <StatusBadge value={backlog?.atrasadas || 0} label="Atrasadas" color="danger" />
         </div>
       </div>
 
-      {/* Costs */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="border border-border rounded-sm p-4 bg-card">
-          <h2 className="font-heading font-semibold mb-4 flex items-center gap-2">
-            <DollarSign className="h-5 w-5" />
-            Custos do Mês
-          </h2>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center p-3 bg-muted rounded-sm">
-              <span className="text-sm">Custo Total de Manutenção</span>
-              <span className="font-heading font-bold text-lg">
-                R$ {kpis?.custo_total_mes?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
-              </span>
-            </div>
-            <div className="flex justify-between items-center p-3 bg-destructive/10 rounded-sm">
-              <span className="text-sm">Custo de Máquina Parada</span>
-              <span className="font-heading font-bold text-lg text-destructive">
-                R$ {kpis?.custo_parada_mes?.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Preventiva vs Corretiva Pie */}
-        <div className="border border-border rounded-sm p-4 bg-card">
-          <h2 className="font-heading font-semibold mb-4">Preventiva vs Corretiva</h2>
-          {pieData.length > 0 && (pieData[0].value > 0 || pieData[1].value > 0) ? (
-            <ResponsiveContainer width="100%" height={180}>
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Preventiva vs Corretiva */}
+        <div className="border border-border rounded-lg bg-card p-5">
+          <h3 className="font-heading font-semibold mb-1">Preventiva vs Corretiva</h3>
+          <p className="text-xs text-muted-foreground mb-4">
+            {prevPercent}% preventiva — {prevPercent >= 60 ? "Boa prática" : "Oportunidade de melhoria"}
+          </p>
+          {totalPie > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie
                   data={pieData}
                   cx="50%"
                   cy="50%"
-                  innerRadius={40}
-                  outerRadius={70}
-                  paddingAngle={2}
+                  innerRadius={50}
+                  outerRadius={80}
+                  paddingAngle={3}
                   dataKey="value"
+                  strokeWidth={0}
                 >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
+                  <Cell fill={COLORS.success} />
+                  <Cell fill={COLORS.danger} />
                 </Pie>
-                <Legend />
-                <Tooltip />
+                <Legend 
+                  verticalAlign="bottom" 
+                  formatter={(value) => <span className="text-xs">{value}</span>}
+                />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}
+                />
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-[180px] flex items-center justify-center text-muted-foreground text-sm">
+            <div className="h-[200px] flex items-center justify-center text-muted-foreground text-sm">
               Sem dados disponíveis
             </div>
           )}
         </div>
+
+        {/* Financial Impact */}
+        <div className="border border-border rounded-lg bg-card p-5">
+          <h3 className="font-heading font-semibold mb-1">Impacto Financeiro</h3>
+          <p className="text-xs text-muted-foreground mb-4">Custo de manutenção vs parada</p>
+          <div className="space-y-4">
+            <div className="relative">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm font-medium">Custo de Manutenção</span>
+                <span className="text-lg font-bold font-heading text-blue-500">
+                  R$ {(kpis?.custo_total_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="h-3 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 rounded-full"
+                  style={{ width: `${Math.min(((kpis?.custo_total_mes || 0) / Math.max((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0), 1)) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+            <div className="relative">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm font-medium">Custo de Parada</span>
+                <span className="text-lg font-bold font-heading text-red-500">
+                  R$ {(kpis?.custo_parada_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="h-3 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-red-500 rounded-full"
+                  style={{ width: `${Math.min(((kpis?.custo_parada_mes || 0) / Math.max((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0), 1)) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+            <div className="pt-3 border-t border-border">
+              <div className="flex justify-between items-center">
+                <span className="text-sm font-semibold">Custo Total</span>
+                <span className="text-xl font-bold font-heading">
+                  R$ {((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Rankings */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Top Falhas */}
-        <div className="border border-border rounded-sm p-4 bg-card">
-          <h2 className="font-heading font-semibold mb-4">Top Equipamentos - Falhas</h2>
-          {kpis?.top_equipamentos_falhas?.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={kpis.top_equipamentos_falhas} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" />
-                <YAxis dataKey="codigo" type="category" width={80} tick={{ fontSize: 12 }} />
-                <Tooltip />
-                <Bar dataKey="total" fill="hsl(0, 72%, 51%)" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[200px] flex items-center justify-center text-muted-foreground text-sm">
-              Sem dados de falhas
-            </div>
-          )}
-        </div>
-
-        {/* Top Custos */}
-        <div className="border border-border rounded-sm p-4 bg-card">
-          <h2 className="font-heading font-semibold mb-4">Top Equipamentos - Custos</h2>
-          {kpis?.top_equipamentos_custos?.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={kpis.top_equipamentos_custos} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" tickFormatter={(value) => `R$${value}`} />
-                <YAxis dataKey="codigo" type="category" width={80} tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(value) => `R$ ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
-                <Bar dataKey="total" fill="hsl(217, 91%, 60%)" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-[200px] flex items-center justify-center text-muted-foreground text-sm">
-              Sem dados de custos
-            </div>
-          )}
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <RankingList
+          title="Mais Falhas"
+          items={kpis?.top_equipamentos_falhas}
+          icon={AlertTriangle}
+          valueFormatter={(item) => `${item.total} falhas`}
+          emptyMsg="Nenhuma falha registrada"
+        />
+        <RankingList
+          title="Maior Custo"
+          items={kpis?.top_equipamentos_custos}
+          icon={DollarSign}
+          valueFormatter={(item) => `R$ ${item.total?.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}
+          emptyMsg="Sem custos registrados"
+        />
+        <RankingList
+          title="Maior Downtime"
+          items={kpis?.top_equipamentos_downtime}
+          icon={Clock}
+          valueFormatter={(item) => `${item.total_horas}h`}
+          emptyMsg="Sem dados de parada"
+        />
       </div>
     </div>
   );

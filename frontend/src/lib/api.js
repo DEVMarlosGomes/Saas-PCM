@@ -92,6 +92,16 @@ export const createUser = (data) => api.post('/users', data);
 // Auditoria
 export const getAuditoria = (params) => api.get('/auditoria', { params });
 
+// Billing
+export const getBillingPlan = () => api.get('/billing/plan');
+export const createBillingCheckout = (data) => api.post('/billing/checkout', data);
+export const getCheckoutStatus = (sessionId) => api.get(`/billing/checkout/status/${sessionId}`);
+export const getBillingTransactions = () => api.get('/billing/transactions');
+
+// Reviews
+export const getPendingReviews = () => api.get('/ordens-servico/pending-reviews');
+export const autoApproveExpired = () => api.post('/ordens-servico/auto-approve');
+
 // Seed Demo
 export const seedDemo = () => api.post('/seed-demo');
 

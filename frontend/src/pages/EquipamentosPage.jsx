@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import UpgradeDialog from "../components/UpgradeDialog";
+import { useUpgradeDialog } from "../hooks/useUpgradeDialog";
 import {
   Plus,
   Search,
@@ -29,6 +31,7 @@ const criticidadeColors = {
 
 export default function EquipamentosPage() {
   const { user } = useAuth();
+  const { upgradeOpen, upgradeMessage, handleApiError, closeUpgrade } = useUpgradeDialog();
   const [equipamentos, setEquipamentos] = useState([]);
   const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +88,9 @@ export default function EquipamentosPage() {
       setFormData({ codigo: "", nome: "", descricao: "", localizacao: "", valor_hora: "", grupo_id: "", criticidade: "3" });
       loadData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Erro ao criar equipamento");
+      if (!handleApiError(error)) {
+        toast.error(error.response?.data?.detail || "Erro ao criar equipamento");
+      }
     }
   };
 
@@ -191,7 +196,7 @@ export default function EquipamentosPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="valor_hora">Valor/Hora (R$)</Label>
+                    <Label htmlFor="valor_hora">Receita/Hora Parada (R$)</Label>
                     <Input
                       id="valor_hora"
                       type="number"
@@ -201,6 +206,7 @@ export default function EquipamentosPage() {
                       placeholder="500.00"
                       className="rounded-sm"
                     />
+                    <p className="text-xs text-muted-foreground">Custo de receita perdida por hora de parada</p>
                   </div>
                 </div>
 
@@ -379,6 +385,11 @@ export default function EquipamentosPage() {
                           <Badge className={`rounded-sm ${os.tipo === 'corretiva' ? 'bg-red-500/10 text-red-600' : 'bg-green-500/10 text-green-600'}`}>
                             {os.tipo}
                           </Badge>
+                          {os.custo_parada != null && os.custo_parada > 0 && (
+                            <span className="text-xs font-mono text-red-500">
+                              R$ {os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} parada
+                            </span>
+                          )}
                         </div>
                         <p className="text-sm text-muted-foreground truncate max-w-[300px]">{os.descricao}</p>
                       </div>
@@ -396,6 +407,7 @@ export default function EquipamentosPage() {
           )}
         </DialogContent>
       </Dialog>
+      <UpgradeDialog open={upgradeOpen} onClose={closeUpgrade} message={upgradeMessage} />
     </div>
   );
 }

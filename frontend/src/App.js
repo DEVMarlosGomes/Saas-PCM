@@ -12,6 +12,7 @@ import OrdensServicoPage from "./pages/OrdensServicoPage";
 import PlanosPreventivosPage from "./pages/PlanosPreventivosPage";
 import UsuariosPage from "./pages/UsuariosPage";
 import AuditoriaPage from "./pages/AuditoriaPage";
+import BillingPage from "./pages/BillingPage";
 
 // Layout
 import AppLayout from "./components/AppLayout";
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="planos-preventivos" element={<PlanosPreventivosPage />} />
         <Route path="usuarios" element={<UsuariosPage />} />
         <Route path="auditoria" element={<AuditoriaPage />} />
+        <Route path="billing" element={<BillingPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

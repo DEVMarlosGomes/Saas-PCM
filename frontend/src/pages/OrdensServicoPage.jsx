@@ -10,6 +10,8 @@ import { Badge } from "../components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import UpgradeDialog from "../components/UpgradeDialog";
+import { useUpgradeDialog } from "../hooks/useUpgradeDialog";
 import {
   Plus,
   Search,
@@ -47,6 +49,7 @@ const tipoConfig = {
 
 export default function OrdensServicoPage() {
   const { user } = useAuth();
+  const { upgradeOpen, upgradeMessage, handleApiError, closeUpgrade } = useUpgradeDialog();
   const [ordens, setOrdens] = useState([]);
   const [equipamentos, setEquipamentos] = useState([]);
   const [grupos, setGrupos] = useState([]);
@@ -128,7 +131,9 @@ export default function OrdensServicoPage() {
       });
       loadData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Erro ao criar OS");
+      if (!handleApiError(error)) {
+        toast.error(error.response?.data?.detail || "Erro ao criar OS");
+      }
     }
   };
 
@@ -374,19 +379,20 @@ export default function OrdensServicoPage() {
                 <th className="text-center font-medium p-3">Prioridade</th>
                 <th className="text-center font-medium p-3">Status</th>
                 <th className="text-left font-medium p-3 hidden lg:table-cell">Data</th>
+                <th className="text-right font-medium p-3 hidden md:table-cell">Custo Parada</th>
                 <th className="text-right font-medium p-3">Ações</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="text-center p-8 text-muted-foreground">
+                  <td colSpan={8} className="text-center p-8 text-muted-foreground">
                     Carregando...
                   </td>
                 </tr>
               ) : filteredOrdens.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center p-8 text-muted-foreground">
+                  <td colSpan={8} className="text-center p-8 text-muted-foreground">
                     Nenhuma OS encontrada
                   </td>
                 </tr>
@@ -402,7 +408,7 @@ export default function OrdensServicoPage() {
                       )}
                     </td>
                     <td className="p-3">
-                      <div className="text-sm truncate max-w-[200px]">{getEquipamentoNome(os.equipamento_id)}</div>
+                      <div className="text-sm truncate max-w-[200px]">{os.equipamento_nome || getEquipamentoNome(os.equipamento_id)}</div>
                       <div className="text-xs text-muted-foreground truncate max-w-[200px]">{os.descricao}</div>
                     </td>
                     <td className="p-3 text-center">
@@ -425,6 +431,15 @@ export default function OrdensServicoPage() {
                     </td>
                     <td className="p-3 hidden lg:table-cell text-sm text-muted-foreground">
                       {new Date(os.created_at).toLocaleDateString('pt-BR')}
+                    </td>
+                    <td className="p-3 text-right hidden md:table-cell">
+                      {os.custo_parada != null ? (
+                        <span className="font-mono text-sm font-semibold text-red-600 dark:text-red-400">
+                          R$ {os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">-</span>
+                      )}
                     </td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -512,6 +527,50 @@ export default function OrdensServicoPage() {
                     <div>
                       <p className="text-xs text-muted-foreground">Solução</p>
                       <p className="mt-1">{detailDialog.os.solucao}</p>
+                    </div>
+                  )}
+
+                  {/* Downtime Cost */}
+                  {detailDialog.os.custo_parada != null && (
+                    <div className="p-3 border border-red-500/20 bg-red-500/5 rounded-sm">
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <DollarSign className="h-3 w-3" /> Custo de Parada (Máquina Parada)
+                      </p>
+                      <p className="text-xl font-heading font-bold text-red-600 dark:text-red-400 mt-1">
+                        R$ {detailDialog.os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </p>
+                      {detailDialog.os.tempo_total && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {(detailDialog.os.tempo_total / 60).toFixed(1)}h parada
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Review Info */}
+                  {(detailDialog.os.status === "aguardando_revisao" || detailDialog.os.status === "revisada") && (
+                    <div className="p-3 border border-amber-500/20 bg-amber-500/5 rounded-sm space-y-2">
+                      <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                        <FileCheck className="h-3 w-3" /> Revisão
+                      </p>
+                      {detailDialog.os.revisor_nome && (
+                        <p className="text-sm"><span className="text-muted-foreground">Revisor:</span> {detailDialog.os.revisor_nome}</p>
+                      )}
+                      {detailDialog.os.review_deadline && (
+                        <p className="text-sm">
+                          <span className="text-muted-foreground">Prazo:</span>{" "}
+                          {new Date(detailDialog.os.review_deadline).toLocaleString('pt-BR')}
+                          {detailDialog.os.status === "aguardando_revisao" && new Date(detailDialog.os.review_deadline) < new Date() && (
+                            <Badge className="ml-2 bg-red-500/10 text-red-600 rounded-sm text-xs">Expirado</Badge>
+                          )}
+                        </p>
+                      )}
+                      {detailDialog.os.auto_approved && (
+                        <Badge className="bg-amber-500/10 text-amber-600 rounded-sm text-xs">Auto-aprovada</Badge>
+                      )}
+                      {detailDialog.os.review_notes && (
+                        <p className="text-sm"><span className="text-muted-foreground">Notas:</span> {detailDialog.os.review_notes}</p>
+                      )}
                     </div>
                   )}
 
@@ -638,11 +697,27 @@ export default function OrdensServicoPage() {
                         </div>
                       ))}
                       <div className="flex justify-between p-3 bg-muted rounded-sm">
-                        <p className="font-medium">Total</p>
+                        <p className="font-medium">Total Custos Diretos</p>
                         <p className="font-heading font-bold">
                           R$ {detailDialog.custos.reduce((acc, c) => acc + c.valor * c.quantidade, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </p>
                       </div>
+                      {detailDialog.os.custo_parada != null && (
+                        <>
+                          <div className="flex justify-between p-3 bg-red-500/5 border border-red-500/10 rounded-sm">
+                            <p className="font-medium text-red-600 dark:text-red-400">Custo Parada</p>
+                            <p className="font-heading font-bold text-red-600 dark:text-red-400">
+                              R$ {detailDialog.os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </p>
+                          </div>
+                          <div className="flex justify-between p-3 bg-primary/5 border border-primary/10 rounded-sm">
+                            <p className="font-semibold">Impacto Total</p>
+                            <p className="font-heading font-bold text-primary">
+                              R$ {(detailDialog.custos.reduce((acc, c) => acc + c.valor * c.quantidade, 0) + (detailDialog.os.custo_parada || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </p>
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
                 </TabsContent>
@@ -726,6 +801,7 @@ export default function OrdensServicoPage() {
           </form>
         </DialogContent>
       </Dialog>
+      <UpgradeDialog open={upgradeOpen} onClose={closeUpgrade} message={upgradeMessage} />
     </div>
   );
 }

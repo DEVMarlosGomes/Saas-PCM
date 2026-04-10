@@ -87,6 +87,13 @@ class PlanoSaaS(str, enum.Enum):
     PRO = "pro"
     ENTERPRISE = "enterprise"
 
+# Plan limits configuration
+PLAN_LIMITS = {
+    PlanoSaaS.FREE: {"max_equipamentos": 10, "max_users": 5, "max_os_mes": 50, "price": 0.00, "label": "Free"},
+    PlanoSaaS.PRO: {"max_equipamentos": 100, "max_users": 50, "max_os_mes": 500, "price": 99.00, "label": "Pro"},
+    PlanoSaaS.ENTERPRISE: {"max_equipamentos": 9999, "max_users": 999, "max_os_mes": 9999, "price": 299.00, "label": "Enterprise"},
+}
+
 # ========== MODELS ==========
 class Organization(Base):
     __tablename__ = "organizations"
@@ -99,6 +106,9 @@ class Organization(Base):
     limite_usuarios = Column(Integer, default=5)
     limite_os_mes = Column(Integer, default=50)
     ativo = Column(Boolean, default=True)
+    stripe_customer_id = Column(String(255), nullable=True)
+    stripe_subscription_id = Column(String(255), nullable=True)
+    subscription_status = Column(String(50), default="active")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -197,6 +207,11 @@ class OrdemServico(Base):
     # Bloco de parada
     bloco_parada_id = Column(UUID(as_uuid=True), nullable=True)
     
+    # Review workflow
+    review_deadline = Column(DateTime(timezone=True), nullable=True)
+    review_notes = Column(Text, nullable=True)
+    auto_approved = Column(Boolean, default=False)
+    
     __table_args__ = (Index('idx_os_org', 'organization_id'),)
 
 class CustoOS(Base):
@@ -256,6 +271,20 @@ class PasswordResetToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     used = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    session_id = Column(String(255), unique=True, nullable=False, index=True)
+    plan = Column(String(50), nullable=False)
+    amount = Column(Float, nullable=False)
+    currency = Column(String(10), default="usd")
+    payment_status = Column(String(50), default="pending")
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -377,11 +406,13 @@ class OSUpdate(BaseModel):
     falha_tipo: Optional[str] = None
     falha_modo: Optional[str] = None
     falha_causa: Optional[str] = None
+    review_notes: Optional[str] = None
 
 class OSResponse(BaseModel):
     id: str
     numero: int
     equipamento_id: str
+    equipamento_nome: Optional[str] = None
     grupo_id: Optional[str]
     subgrupo_id: Optional[str]
     tipo: str
@@ -392,6 +423,7 @@ class OSResponse(BaseModel):
     solicitante_id: str
     tecnico_id: Optional[str]
     revisor_id: Optional[str]
+    revisor_nome: Optional[str] = None
     created_at: datetime
     inicio_atendimento: Optional[datetime]
     fim_atendimento: Optional[datetime]
@@ -404,6 +436,10 @@ class OSResponse(BaseModel):
     falha_causa: Optional[str]
     reincidente: bool
     organization_id: str
+    custo_parada: Optional[float] = None
+    review_deadline: Optional[datetime] = None
+    review_notes: Optional[str] = None
+    auto_approved: bool = False
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -455,9 +491,22 @@ class DashboardKPIs(BaseModel):
     disponibilidade: float  # %
     custo_total_mes: float
     custo_parada_mes: float
+    avg_tempo_resposta: float  # Average response time in minutes
     preventiva_vs_corretiva: dict
     top_equipamentos_falhas: List[dict]
     top_equipamentos_custos: List[dict]
+    top_equipamentos_downtime: List[dict]
+
+class BillingPlanResponse(BaseModel):
+    plano: str
+    subscription_status: str
+    limits: dict
+    usage: dict
+    usage_percent: dict
+
+class CheckoutRequest(BaseModel):
+    plan: str
+    origin_url: str
 
 # ========== HELPER FUNCTIONS ==========
 def get_db():
@@ -580,6 +629,97 @@ def create_audit_log(db: Session, org_id: str, user_id: str, entidade: str, enti
 def get_next_os_number(db: Session, org_id: str) -> int:
     last_os = db.query(OrdemServico).filter(OrdemServico.organization_id == org_id).order_by(OrdemServico.numero.desc()).first()
     return (last_os.numero + 1) if last_os else 1
+
+def get_org_usage(db: Session, org_id) -> dict:
+    """Get current usage counts for an organization"""
+    now = datetime.now(timezone.utc)
+    first_day_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+    equipamentos_count = db.query(Equipamento).filter(
+        Equipamento.organization_id == org_id,
+        Equipamento.ativo == True
+    ).count()
+    
+    users_count = db.query(User).filter(
+        User.organization_id == org_id,
+        User.ativo == True
+    ).count()
+    
+    os_mes_count = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == org_id,
+        OrdemServico.created_at >= first_day_month
+    ).count()
+    
+    return {
+        "equipamentos": equipamentos_count,
+        "users": users_count,
+        "os_mes": os_mes_count
+    }
+
+def check_plan_limit(db: Session, org: Organization, resource: str) -> tuple:
+    """Check if organization has reached its plan limit for a resource.
+    Returns (allowed: bool, message: str)"""
+    usage = get_org_usage(db, org.id)
+    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.FREE])
+    
+    limit_map = {
+        "equipamentos": ("max_equipamentos", usage["equipamentos"]),
+        "users": ("max_users", usage["users"]),
+        "os": ("max_os_mes", usage["os_mes"]),
+    }
+    
+    if resource not in limit_map:
+        return True, ""
+    
+    limit_key, current = limit_map[resource]
+    max_val = limits[limit_key]
+    
+    if current >= max_val:
+        plan_label = limits["label"]
+        return False, f"Limite do plano {plan_label} atingido: {current}/{max_val} {resource}. Faça upgrade para continuar."
+    
+    return True, ""
+
+def build_os_response(o, db: Session) -> OSResponse:
+    """Build OSResponse with computed custo_parada and enriched names"""
+    # Compute downtime cost
+    custo_parada = None
+    equipamento_nome = None
+    equip = db.query(Equipamento).filter(Equipamento.id == o.equipamento_id).first()
+    if equip:
+        equipamento_nome = equip.nome
+        if o.tempo_total and equip.valor_hora:
+            custo_parada = round((o.tempo_total / 60) * equip.valor_hora, 2)
+    
+    # Get reviewer name
+    revisor_nome = None
+    if o.revisor_id:
+        revisor = db.query(User).filter(User.id == o.revisor_id).first()
+        if revisor:
+            revisor_nome = revisor.nome
+    
+    return OSResponse(
+        id=str(o.id), numero=o.numero, equipamento_id=str(o.equipamento_id),
+        equipamento_nome=equipamento_nome,
+        grupo_id=str(o.grupo_id) if o.grupo_id else None,
+        subgrupo_id=str(o.subgrupo_id) if o.subgrupo_id else None,
+        tipo=o.tipo.value, prioridade=o.prioridade.value, status=o.status.value,
+        descricao=o.descricao, solucao=o.solucao,
+        solicitante_id=str(o.solicitante_id),
+        tecnico_id=str(o.tecnico_id) if o.tecnico_id else None,
+        revisor_id=str(o.revisor_id) if o.revisor_id else None,
+        revisor_nome=revisor_nome,
+        created_at=o.created_at, inicio_atendimento=o.inicio_atendimento,
+        fim_atendimento=o.fim_atendimento, tempo_resposta=o.tempo_resposta,
+        tempo_reparo=o.tempo_reparo, tempo_total=o.tempo_total,
+        dentro_sla=o.dentro_sla, falha_tipo=o.falha_tipo,
+        falha_modo=o.falha_modo, falha_causa=o.falha_causa,
+        reincidente=o.reincidente, organization_id=str(o.organization_id),
+        custo_parada=custo_parada,
+        review_deadline=o.review_deadline,
+        review_notes=o.review_notes,
+        auto_approved=o.auto_approved or False
+    )
 
 def calculate_sla(prioridade: PrioridadeOS, tempo_resposta: int) -> bool:
     sla_map = {
@@ -767,6 +907,12 @@ async def create_user(data: UserCreate, user: User = Depends(get_current_user), 
     if user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Apenas admin pode criar usuários")
     
+    # Check plan limit
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    allowed, msg = check_plan_limit(db, org, "users")
+    if not allowed:
+        raise HTTPException(status_code=402, detail=msg)
+    
     existing = db.query(User).filter(User.email == data.email.lower()).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email já cadastrado")
@@ -854,6 +1000,12 @@ async def list_equipamentos(user: User = Depends(get_current_user), db: Session 
 async def create_equipamento(data: EquipamentoCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
         raise HTTPException(status_code=403, detail="Acesso negado")
+    
+    # Check plan limit
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    allowed, msg = check_plan_limit(db, org, "equipamentos")
+    if not allowed:
+        raise HTTPException(status_code=402, detail=msg)
     
     equipamento = Equipamento(
         codigo=data.codigo, nome=data.nome, descricao=data.descricao,
@@ -964,25 +1116,16 @@ async def list_os(
     
     ordens = query.order_by(OrdemServico.created_at.desc()).all()
     
-    return [OSResponse(
-        id=str(o.id), numero=o.numero, equipamento_id=str(o.equipamento_id),
-        grupo_id=str(o.grupo_id) if o.grupo_id else None,
-        subgrupo_id=str(o.subgrupo_id) if o.subgrupo_id else None,
-        tipo=o.tipo.value, prioridade=o.prioridade.value, status=o.status.value,
-        descricao=o.descricao, solucao=o.solucao,
-        solicitante_id=str(o.solicitante_id),
-        tecnico_id=str(o.tecnico_id) if o.tecnico_id else None,
-        revisor_id=str(o.revisor_id) if o.revisor_id else None,
-        created_at=o.created_at, inicio_atendimento=o.inicio_atendimento,
-        fim_atendimento=o.fim_atendimento, tempo_resposta=o.tempo_resposta,
-        tempo_reparo=o.tempo_reparo, tempo_total=o.tempo_total,
-        dentro_sla=o.dentro_sla, falha_tipo=o.falha_tipo,
-        falha_modo=o.falha_modo, falha_causa=o.falha_causa,
-        reincidente=o.reincidente, organization_id=str(o.organization_id)
-    ) for o in ordens]
+    return [build_os_response(o, db) for o in ordens]
 
 @api_router.post("/ordens-servico", response_model=OSResponse)
 async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Check plan limit
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    allowed, msg = check_plan_limit(db, org, "os")
+    if not allowed:
+        raise HTTPException(status_code=402, detail=msg)
+    
     # Verify equipment exists
     equipamento = db.query(Equipamento).filter(
         Equipamento.id == data.equipamento_id,
@@ -1017,22 +1160,7 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
     
     create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os.id), "create")
     
-    return OSResponse(
-        id=str(os.id), numero=os.numero, equipamento_id=str(os.equipamento_id),
-        grupo_id=str(os.grupo_id) if os.grupo_id else None,
-        subgrupo_id=str(os.subgrupo_id) if os.subgrupo_id else None,
-        tipo=os.tipo.value, prioridade=os.prioridade.value, status=os.status.value,
-        descricao=os.descricao, solucao=os.solucao,
-        solicitante_id=str(os.solicitante_id),
-        tecnico_id=str(os.tecnico_id) if os.tecnico_id else None,
-        revisor_id=str(os.revisor_id) if os.revisor_id else None,
-        created_at=os.created_at, inicio_atendimento=os.inicio_atendimento,
-        fim_atendimento=os.fim_atendimento, tempo_resposta=os.tempo_resposta,
-        tempo_reparo=os.tempo_reparo, tempo_total=os.tempo_total,
-        dentro_sla=os.dentro_sla, falha_tipo=os.falha_tipo,
-        falha_modo=os.falha_modo, falha_causa=os.falha_causa,
-        reincidente=os.reincidente, organization_id=str(os.organization_id)
-    )
+    return build_os_response(os, db)
 
 @api_router.put("/ordens-servico/{os_id}", response_model=OSResponse)
 async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1043,10 +1171,15 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
     if not os:
         raise HTTPException(status_code=404, detail="OS não encontrada")
     
+    import json as json_lib
     now = datetime.now(timezone.utc)
+    
+    # Track field changes for audit
+    changes = {}
     
     if data.status:
         old_status = os.status
+        changes["status"] = {"de": old_status.value, "para": data.status.value}
         os.status = data.status
         
         # Handle status transitions
@@ -1064,6 +1197,19 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
             if os.inicio_atendimento:
                 os.tempo_reparo = int((now - os.inicio_atendimento).total_seconds() / 60)
             os.tempo_total = int((now - os.created_at).total_seconds() / 60)
+            
+            # Auto-assign leader as reviewer
+            leader = db.query(User).filter(
+                User.organization_id == user.organization_id,
+                User.role == UserRole.LIDER,
+                User.ativo == True
+            ).first()
+            if leader:
+                os.revisor_id = leader.id
+                changes["revisor_auto_atribuido"] = leader.nome
+            
+            # Set 24h review deadline
+            os.review_deadline = now + timedelta(hours=24)
         
         elif data.status == StatusOS.REVISADA:
             os.revisado_at = now
@@ -1073,37 +1219,97 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
             os.fechado_at = now
     
     if data.solucao:
+        if os.solucao != data.solucao:
+            changes["solucao"] = {"de": os.solucao or "", "para": data.solucao}
         os.solucao = data.solucao
     if data.tecnico_id:
         os.tecnico_id = data.tecnico_id
     if data.falha_tipo:
+        if os.falha_tipo != data.falha_tipo:
+            changes["falha_tipo"] = {"de": os.falha_tipo or "", "para": data.falha_tipo}
         os.falha_tipo = data.falha_tipo
     if data.falha_modo:
+        if os.falha_modo != data.falha_modo:
+            changes["falha_modo"] = {"de": os.falha_modo or "", "para": data.falha_modo}
         os.falha_modo = data.falha_modo
     if data.falha_causa:
+        if os.falha_causa != data.falha_causa:
+            changes["falha_causa"] = {"de": os.falha_causa or "", "para": data.falha_causa}
         os.falha_causa = data.falha_causa
+    if data.review_notes:
+        os.review_notes = data.review_notes
+        changes["review_notes"] = data.review_notes
     
     db.commit()
     db.refresh(os)
     
-    create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os.id), "update")
-    
-    return OSResponse(
-        id=str(os.id), numero=os.numero, equipamento_id=str(os.equipamento_id),
-        grupo_id=str(os.grupo_id) if os.grupo_id else None,
-        subgrupo_id=str(os.subgrupo_id) if os.subgrupo_id else None,
-        tipo=os.tipo.value, prioridade=os.prioridade.value, status=os.status.value,
-        descricao=os.descricao, solucao=os.solucao,
-        solicitante_id=str(os.solicitante_id),
-        tecnico_id=str(os.tecnico_id) if os.tecnico_id else None,
-        revisor_id=str(os.revisor_id) if os.revisor_id else None,
-        created_at=os.created_at, inicio_atendimento=os.inicio_atendimento,
-        fim_atendimento=os.fim_atendimento, tempo_resposta=os.tempo_resposta,
-        tempo_reparo=os.tempo_reparo, tempo_total=os.tempo_total,
-        dentro_sla=os.dentro_sla, falha_tipo=os.falha_tipo,
-        falha_modo=os.falha_modo, falha_causa=os.falha_causa,
-        reincidente=os.reincidente, organization_id=str(os.organization_id)
+    # Enhanced audit log with field changes
+    create_audit_log(
+        db, str(user.organization_id), str(user.id), "ordem_servico", str(os.id), "update",
+        dados_anteriores=None,
+        dados_novos=json_lib.dumps(changes, ensure_ascii=False) if changes else None
     )
+    
+    return build_os_response(os, db)
+
+@api_router.post("/ordens-servico/auto-approve")
+async def auto_approve_expired_reviews(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Auto-approve work orders past their 24h review deadline"""
+    if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    
+    now = datetime.now(timezone.utc)
+    expired = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == user.organization_id,
+        OrdemServico.status == StatusOS.AGUARDANDO_REVISAO,
+        OrdemServico.review_deadline != None,
+        OrdemServico.review_deadline < now
+    ).all()
+    
+    count = 0
+    for os_item in expired:
+        os_item.status = StatusOS.REVISADA
+        os_item.revisado_at = now
+        os_item.auto_approved = True
+        os_item.review_notes = "Auto-aprovada: prazo de revisão de 24h expirado"
+        count += 1
+        create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os_item.id), "auto_approve")
+    
+    db.commit()
+    return {"auto_approved": count, "message": f"{count} OS auto-aprovadas"}
+
+@api_router.get("/ordens-servico/pending-reviews")
+async def get_pending_reviews(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get work orders pending review for the current user"""
+    now = datetime.now(timezone.utc)
+    
+    query = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == user.organization_id,
+        OrdemServico.status == StatusOS.AGUARDANDO_REVISAO
+    )
+    
+    # Leaders see OS assigned to them for review
+    if user.role == UserRole.LIDER:
+        query = query.filter(OrdemServico.revisor_id == user.id)
+    elif user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    
+    pending = query.order_by(OrdemServico.review_deadline.asc()).all()
+    
+    results = []
+    for o in pending:
+        resp = build_os_response(o, db)
+        time_remaining = None
+        if o.review_deadline:
+            remaining = (o.review_deadline - now).total_seconds()
+            time_remaining = max(0, round(remaining / 3600, 1))
+        results.append({
+            **resp.model_dump(),
+            "hours_remaining": time_remaining,
+            "is_expired": time_remaining is not None and time_remaining <= 0
+        })
+    
+    return results
 
 @api_router.get("/ordens-servico/{os_id}", response_model=OSResponse)
 async def get_os(os_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1113,22 +1319,7 @@ async def get_os(os_id: str, user: User = Depends(get_current_user), db: Session
     ).first()
     if not os:
         raise HTTPException(status_code=404, detail="OS não encontrada")
-    return OSResponse(
-        id=str(os.id), numero=os.numero, equipamento_id=str(os.equipamento_id),
-        grupo_id=str(os.grupo_id) if os.grupo_id else None,
-        subgrupo_id=str(os.subgrupo_id) if os.subgrupo_id else None,
-        tipo=os.tipo.value, prioridade=os.prioridade.value, status=os.status.value,
-        descricao=os.descricao, solucao=os.solucao,
-        solicitante_id=str(os.solicitante_id),
-        tecnico_id=str(os.tecnico_id) if os.tecnico_id else None,
-        revisor_id=str(os.revisor_id) if os.revisor_id else None,
-        created_at=os.created_at, inicio_atendimento=os.inicio_atendimento,
-        fim_atendimento=os.fim_atendimento, tempo_resposta=os.tempo_resposta,
-        tempo_reparo=os.tempo_reparo, tempo_total=os.tempo_total,
-        dentro_sla=os.dentro_sla, falha_tipo=os.falha_tipo,
-        falha_modo=os.falha_modo, falha_causa=os.falha_causa,
-        reincidente=os.reincidente, organization_id=str(os.organization_id)
-    )
+    return build_os_response(os, db)
 
 # ========== CUSTOS ENDPOINTS ==========
 @api_router.get("/custos", response_model=List[CustoResponse])
@@ -1375,6 +1566,29 @@ async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session
         if equip:
             top_equipamentos_custos.append({"nome": equip.nome, "codigo": equip.codigo, "total": float(total or 0)})
     
+    # Average response time
+    os_com_resposta = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == org_id,
+        OrdemServico.tempo_resposta != None
+    ).all()
+    avg_tempo_resposta = sum(o.tempo_resposta for o in os_com_resposta) / len(os_com_resposta) if os_com_resposta else 0
+    
+    # Top equipamentos por downtime (tempo parado)
+    top_downtime_raw = db.query(
+        OrdemServico.equipamento_id,
+        func.sum(OrdemServico.tempo_total).label('total_downtime')
+    ).filter(
+        OrdemServico.organization_id == org_id,
+        OrdemServico.tempo_total != None
+    ).group_by(OrdemServico.equipamento_id).order_by(func.sum(OrdemServico.tempo_total).desc()).limit(5).all()
+    
+    top_equipamentos_downtime = []
+    for eq_id, total_dt in top_downtime_raw:
+        equip = db.query(Equipamento).filter(Equipamento.id == eq_id).first()
+        if equip:
+            hours = round((total_dt or 0) / 60, 1)
+            top_equipamentos_downtime.append({"nome": equip.nome, "codigo": equip.codigo, "total_horas": hours})
+    
     return DashboardKPIs(
         total_os_mes=total_os_mes,
         os_abertas=os_abertas,
@@ -1384,9 +1598,11 @@ async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session
         disponibilidade=round(disponibilidade, 2),
         custo_total_mes=round(custo_total_mes, 2),
         custo_parada_mes=round(custo_parada, 2),
+        avg_tempo_resposta=round(avg_tempo_resposta, 1),
         preventiva_vs_corretiva={"preventiva": preventivas, "corretiva": corretivas},
         top_equipamentos_falhas=top_equipamentos_falhas,
-        top_equipamentos_custos=top_equipamentos_custos
+        top_equipamentos_custos=top_equipamentos_custos,
+        top_equipamentos_downtime=top_equipamentos_downtime
     )
 
 @api_router.get("/dashboard/backlog")
@@ -1469,6 +1685,7 @@ async def get_equipamento_historico(equipamento_id: str, user: User = Depends(ge
             "tipo": o.tipo.value,
             "status": o.status.value,
             "descricao": o.descricao,
+            "custo_parada": round(((o.tempo_total or 0) / 60) * equipamento.valor_hora, 2) if o.tempo_total and equipamento.valor_hora else None,
             "created_at": o.created_at.isoformat()
         } for o in ordens[:20]]
     }
@@ -1495,8 +1712,241 @@ async def list_auditoria(
         "entidade": l.entidade,
         "entidade_id": str(l.entidade_id),
         "acao": l.acao,
+        "dados_novos": l.dados_novos,
         "created_at": l.created_at.isoformat()
     } for l in logs]
+
+# ========== BILLING ENDPOINTS ==========
+@api_router.get("/billing/plan")
+async def get_billing_plan(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get current plan info and usage for the organization"""
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    
+    usage = get_org_usage(db, org.id)
+    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.FREE])
+    
+    usage_percent = {
+        "equipamentos": round((usage["equipamentos"] / limits["max_equipamentos"]) * 100, 1) if limits["max_equipamentos"] > 0 else 0,
+        "users": round((usage["users"] / limits["max_users"]) * 100, 1) if limits["max_users"] > 0 else 0,
+        "os_mes": round((usage["os_mes"] / limits["max_os_mes"]) * 100, 1) if limits["max_os_mes"] > 0 else 0,
+    }
+    
+    return {
+        "plano": org.plano.value,
+        "subscription_status": org.subscription_status or "active",
+        "limits": {
+            "max_equipamentos": limits["max_equipamentos"],
+            "max_users": limits["max_users"],
+            "max_os_mes": limits["max_os_mes"],
+        },
+        "usage": usage,
+        "usage_percent": usage_percent,
+        "all_plans": {
+            plan.value: {
+                "label": info["label"],
+                "price": info["price"],
+                "max_equipamentos": info["max_equipamentos"],
+                "max_users": info["max_users"],
+                "max_os_mes": info["max_os_mes"],
+            }
+            for plan, info in PLAN_LIMITS.items()
+        }
+    }
+
+@api_router.post("/billing/checkout")
+async def create_billing_checkout(data: CheckoutRequest, request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Create a Stripe checkout session for plan upgrade"""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode alterar o plano")
+    
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    
+    # Validate plan
+    plan_key = data.plan.lower()
+    try:
+        target_plan = PlanoSaaS(plan_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Plano inválido")
+    
+    if target_plan == PlanoSaaS.FREE:
+        raise HTTPException(status_code=400, detail="Não é possível fazer checkout para o plano Free")
+    
+    if org.plano == target_plan:
+        raise HTTPException(status_code=400, detail="Você já está neste plano")
+    
+    # Get amount from server-side PLAN_LIMITS (never from frontend)
+    plan_info = PLAN_LIMITS[target_plan]
+    amount = plan_info["price"]
+    
+    # Build URLs from provided origin
+    origin_url = data.origin_url.rstrip("/")
+    success_url = f"{origin_url}/billing?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin_url}/billing"
+    
+    import json as json_lib
+    try:
+        from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
+        
+        api_key = os.environ.get("STRIPE_API_KEY", "")
+        host_url = str(request.base_url).rstrip("/")
+        webhook_url = f"{host_url}/api/webhook/stripe"
+        
+        stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+        
+        checkout_request = CheckoutSessionRequest(
+            amount=float(amount),
+            currency="usd",
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={
+                "organization_id": str(org.id),
+                "plan": target_plan.value,
+                "user_id": str(user.id),
+            }
+        )
+        
+        session = await stripe_checkout.create_checkout_session(checkout_request)
+        
+        # Create pending transaction record
+        transaction = PaymentTransaction(
+            organization_id=org.id,
+            session_id=session.session_id,
+            plan=target_plan.value,
+            amount=float(amount),
+            currency="usd",
+            payment_status="pending",
+            metadata_json=json_lib.dumps({
+                "organization_id": str(org.id),
+                "plan": target_plan.value,
+                "user_id": str(user.id),
+            })
+        )
+        db.add(transaction)
+        db.commit()
+        
+        return {"url": session.url, "session_id": session.session_id}
+    except Exception as e:
+        logger.error(f"Stripe checkout error: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao criar sessão de pagamento: {str(e)}")
+
+@api_router.get("/billing/checkout/status/{session_id}")
+async def get_checkout_status(session_id: str, request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Check payment status and update if completed"""
+    import json as json_lib
+    
+    transaction = db.query(PaymentTransaction).filter(PaymentTransaction.session_id == session_id).first()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transação não encontrada")
+    
+    # If already processed, return status
+    if transaction.payment_status == "paid":
+        return {"status": "complete", "payment_status": "paid", "plan": transaction.plan}
+    
+    try:
+        from emergentintegrations.payments.stripe.checkout import StripeCheckout
+        
+        api_key = os.environ.get("STRIPE_API_KEY", "")
+        host_url = str(request.base_url).rstrip("/")
+        webhook_url = f"{host_url}/api/webhook/stripe"
+        
+        stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+        checkout_status = await stripe_checkout.get_checkout_status(session_id)
+        
+        # Update transaction
+        transaction.payment_status = checkout_status.payment_status
+        
+        # If paid and not already processed, upgrade the plan
+        if checkout_status.payment_status == "paid" and transaction.payment_status != "paid":
+            transaction.payment_status = "paid"
+        
+        if checkout_status.payment_status == "paid":
+            org = db.query(Organization).filter(Organization.id == transaction.organization_id).first()
+            if org:
+                target_plan = PlanoSaaS(transaction.plan)
+                plan_info = PLAN_LIMITS[target_plan]
+                org.plano = target_plan
+                org.limite_equipamentos = plan_info["max_equipamentos"]
+                org.limite_usuarios = plan_info["max_users"]
+                org.limite_os_mes = plan_info["max_os_mes"]
+                org.subscription_status = "active"
+        
+        db.commit()
+        
+        return {
+            "status": checkout_status.status,
+            "payment_status": checkout_status.payment_status,
+            "plan": transaction.plan,
+        }
+    except Exception as e:
+        logger.error(f"Checkout status error: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao verificar pagamento: {str(e)}")
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """Handle Stripe webhooks"""
+    import json as json_lib
+    try:
+        from emergentintegrations.payments.stripe.checkout import StripeCheckout
+        
+        api_key = os.environ.get("STRIPE_API_KEY", "")
+        host_url = str(request.base_url).rstrip("/")
+        webhook_url = f"{host_url}/api/webhook/stripe"
+        
+        stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+        body = await request.body()
+        signature = request.headers.get("Stripe-Signature", "")
+        
+        webhook_response = await stripe_checkout.handle_webhook(body, signature)
+        
+        if webhook_response and webhook_response.session_id:
+            transaction = db.query(PaymentTransaction).filter(
+                PaymentTransaction.session_id == webhook_response.session_id
+            ).first()
+            
+            if transaction and transaction.payment_status != "paid":
+                transaction.payment_status = webhook_response.payment_status or "unknown"
+                
+                if webhook_response.payment_status == "paid":
+                    org = db.query(Organization).filter(Organization.id == transaction.organization_id).first()
+                    if org:
+                        target_plan = PlanoSaaS(transaction.plan)
+                        plan_info = PLAN_LIMITS[target_plan]
+                        org.plano = target_plan
+                        org.limite_equipamentos = plan_info["max_equipamentos"]
+                        org.limite_usuarios = plan_info["max_users"]
+                        org.limite_os_mes = plan_info["max_os_mes"]
+                        org.subscription_status = "active"
+                
+                db.commit()
+        
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return {"status": "error", "message": str(e)}
+
+@api_router.get("/billing/transactions")
+async def list_transactions(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """List payment transactions for the organization"""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    
+    transactions = db.query(PaymentTransaction).filter(
+        PaymentTransaction.organization_id == user.organization_id
+    ).order_by(PaymentTransaction.created_at.desc()).limit(20).all()
+    
+    return [{
+        "id": str(t.id),
+        "session_id": t.session_id,
+        "plan": t.plan,
+        "amount": t.amount,
+        "currency": t.currency,
+        "payment_status": t.payment_status,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+    } for t in transactions]
 
 # ========== SEED DATA ==========
 @api_router.post("/seed-demo")

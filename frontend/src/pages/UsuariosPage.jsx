@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import UpgradeDialog from "../components/UpgradeDialog";
+import { useUpgradeDialog } from "../hooks/useUpgradeDialog";
 import {
   Plus,
   Users,
@@ -26,6 +28,7 @@ const roleConfig = {
 
 export default function UsuariosPage() {
   const { user } = useAuth();
+  const { upgradeOpen, upgradeMessage, handleApiError, closeUpgrade } = useUpgradeDialog();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -71,7 +74,9 @@ export default function UsuariosPage() {
       setFormData({ email: "", password: "", nome: "", role: "operador" });
       loadData();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Erro ao criar usuário");
+      if (!handleApiError(error)) {
+        toast.error(error.response?.data?.detail || "Erro ao criar usuário");
+      }
     }
   };
 
@@ -280,6 +285,7 @@ export default function UsuariosPage() {
           </div>
         </div>
       </div>
+      <UpgradeDialog open={upgradeOpen} onClose={closeUpgrade} message={upgradeMessage} />
     </div>
   );
 }

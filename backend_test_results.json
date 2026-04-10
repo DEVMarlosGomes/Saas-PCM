@@ -1,0 +1,93 @@
+[
+  {
+    "test": "Seed Demo Data",
+    "success": true,
+    "details": "Demo data created: Dados de demonstra\u00e7\u00e3o j\u00e1 existem",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:23.690015"
+  },
+  {
+    "test": "Admin Login",
+    "success": true,
+    "details": "Logged in as Administrador Demo (admin)",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:25.396920"
+  },
+  {
+    "test": "Billing Plan Info",
+    "success": true,
+    "details": "Plan: pro, Usage: {'equipamentos': 7, 'users': 4, 'os_mes': 6}, Limits: {'max_equipamentos': 100, 'max_users': 50, 'max_os_mes': 500}",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:26.603798"
+  },
+  {
+    "test": "Billing Transactions",
+    "success": true,
+    "details": "Retrieved 0 transactions",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:27.369527"
+  },
+  {
+    "test": "Billing Checkout",
+    "success": true,
+    "details": "Expected error with test key: Voc\u00ea j\u00e1 est\u00e1 neste plano",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:28.130115"
+  },
+  {
+    "test": "Plan Limit Enforcement",
+    "success": true,
+    "details": "Current usage (7/100) allows more resources",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:29.326487"
+  },
+  {
+    "test": "Downtime Cost Calculation",
+    "success": true,
+    "details": "OS ad78dc23-3cd2-47c4-a17c-9860e05280c2 has custo_parada: 95.0, equipamento: Equipamento Teste",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:34.633919"
+  },
+  {
+    "test": "Review Workflow - Status Update",
+    "success": true,
+    "details": "OS ff7187e1-d925-42a7-b379-04a6ae1a3721 updated with review_deadline and auto-assigned revisor",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:41.664407"
+  },
+  {
+    "test": "Review Workflow - Pending Reviews",
+    "success": true,
+    "details": "Retrieved 2 pending reviews",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:43.008300"
+  },
+  {
+    "test": "Review Workflow - Auto Approve",
+    "success": true,
+    "details": "Auto-approve executed: 0 OS auto-aprovadas",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:43.776549"
+  },
+  {
+    "test": "Enhanced Dashboard KPIs",
+    "success": true,
+    "details": "Enhanced KPIs working - avg_tempo_resposta: 48.2, downtime entries: 5",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:49.028299"
+  },
+  {
+    "test": "Enhanced Audit Trail",
+    "success": true,
+    "details": "Found 2 audit logs with field changes. Sample: {\"status\": {\"de\": \"aberta\", \"para\": \"aguardando_revisao\"}, \"revisor_auto_atribuido\": \"L\u00edder T\u00e9cnico\"...",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:49.792777"
+  },
+  {
+    "test": "Equipamento Historico with Costs",
+    "success": true,
+    "details": "Historico for equipment 461e740e-9754-4390-a3c9-d124a9b4bf9b: 3 orders, 3 with custo_parada",
+    "error": "",
+    "timestamp": "2026-04-10T22:56:51.896045"
+  }
+]

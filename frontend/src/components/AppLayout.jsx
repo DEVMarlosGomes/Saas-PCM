@@ -14,7 +14,8 @@ import {
   Sun,
   Moon,
   Menu,
-  X
+  X,
+  CreditCard
 } from "lucide-react";
 import { useState } from "react";
 
@@ -25,6 +26,7 @@ const navItems = [
   { to: "/planos-preventivos", icon: Calendar, label: "PCM Preventiva" },
   { to: "/usuarios", icon: Users, label: "Usuários", adminOnly: true },
   { to: "/auditoria", icon: FileText, label: "Auditoria", adminOnly: true },
+  { to: "/billing", icon: CreditCard, label: "Planos", adminOnly: true },
 ];
 
 const roleLabels = {
