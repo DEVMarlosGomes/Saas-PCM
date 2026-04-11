@@ -13,6 +13,7 @@ import PlanosPreventivosPage from "./pages/PlanosPreventivosPage";
 import UsuariosPage from "./pages/UsuariosPage";
 import AuditoriaPage from "./pages/AuditoriaPage";
 import BillingPage from "./pages/BillingPage";
+import SettingsPage from "./pages/SettingsPage";
 
 // Layout
 import AppLayout from "./components/AppLayout";
@@ -22,8 +23,13 @@ const ProtectedRoute = ({ children }) => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="animate-pulse text-muted-foreground">Carregando...</div>
+      <div className="min-h-screen flex items-center justify-center bg-background gradient-mesh">
+        <div className="flex flex-col items-center gap-4">
+          <div className="relative">
+            <div className="w-12 h-12 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
+          </div>
+          <span className="text-sm text-muted-foreground font-medium">Carregando PCM...</span>
+        </div>
       </div>
     );
   }
@@ -41,7 +47,7 @@ const PublicRoute = ({ children }) => {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="animate-pulse text-muted-foreground">Carregando...</div>
+        <div className="w-10 h-10 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
       </div>
     );
   }
@@ -58,7 +64,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
       <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
-      
+
       <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
@@ -68,6 +74,7 @@ function AppRoutes() {
         <Route path="usuarios" element={<UsuariosPage />} />
         <Route path="auditoria" element={<AuditoriaPage />} />
         <Route path="billing" element={<BillingPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -81,7 +88,7 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <AppRoutes />
-          <Toaster position="top-right" />
+          <Toaster position="top-right" richColors />
         </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>

@@ -1,50 +1,40 @@
 import { useState, useEffect } from "react";
-import { getOrdensServico, createOrdemServico, updateOrdemServico, getEquipamentos, getGrupos, getCustos, createCusto } from "../lib/api";
+import { getOrdensServico, createOrdemServico, updateOrdemServico, getEquipamentos, getGrupos, getCustos, createCusto, getPendingReviews, autoApproveExpired } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Badge } from "../components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
 import UpgradeDialog from "../components/UpgradeDialog";
 import { useUpgradeDialog } from "../hooks/useUpgradeDialog";
 import {
-  Plus,
-  Search,
-  Wrench,
-  Clock,
-  AlertTriangle,
-  CheckCircle,
-  Eye,
-  Play,
-  FileCheck,
-  DollarSign,
-  Filter
+  Plus, Search, Wrench, Clock, AlertTriangle, CheckCircle, Eye, Play,
+  FileCheck, DollarSign, Filter, X, Loader2, TrendingDown, Shield,
+  ArrowRight, Timer, RefreshCw, Zap,
 } from "lucide-react";
 
 const statusConfig = {
-  aberta: { label: "Aberta", color: "status-aberta", icon: AlertTriangle },
-  em_atendimento: { label: "Em Atendimento", color: "status-em-atendimento", icon: Wrench },
-  aguardando_revisao: { label: "Aguardando Revisão", color: "status-aguardando-revisao", icon: Clock },
-  revisada: { label: "Revisada", color: "status-revisada", icon: CheckCircle },
-  fechada: { label: "Fechada", color: "status-fechada", icon: FileCheck }
+  aberta: { label: "Aberta", color: "status-aberta", icon: AlertTriangle, next: "em_atendimento", nextLabel: "Iniciar" },
+  em_atendimento: { label: "Em Atendimento", color: "status-em-atendimento", icon: Wrench, next: "aguardando_revisao", nextLabel: "Concluir" },
+  aguardando_revisao: { label: "Ag. Revisão", color: "status-aguardando-revisao", icon: Clock, next: "revisada", nextLabel: "Aprovar" },
+  revisada: { label: "Revisada", color: "status-revisada", icon: CheckCircle, next: "fechada", nextLabel: "Fechar" },
+  fechada: { label: "Fechada", color: "status-fechada", icon: FileCheck },
 };
 
 const prioridadeConfig = {
   baixa: { label: "Baixa", color: "priority-baixa" },
   media: { label: "Média", color: "priority-media" },
   alta: { label: "Alta", color: "priority-alta" },
-  critica: { label: "Crítica", color: "priority-critica" }
+  critica: { label: "Crítica", color: "priority-critica" },
 };
 
 const tipoConfig = {
-  corretiva: { label: "Corretiva", color: "bg-red-500/10 text-red-600 dark:text-red-400" },
-  preventiva: { label: "Preventiva", color: "bg-green-500/10 text-green-600 dark:text-green-400" },
-  preditiva: { label: "Preditiva", color: "bg-blue-500/10 text-blue-600 dark:text-blue-400" }
+  corretiva: { label: "Corretiva", color: "bg-red-500/10 text-red-500 border-red-500/20" },
+  preventiva: { label: "Preventiva", color: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" },
+  preditiva: { label: "Preditiva", color: "bg-blue-500/10 text-blue-500 border-blue-500/20" },
 };
 
 export default function OrdensServicoPage() {
@@ -52,33 +42,25 @@ export default function OrdensServicoPage() {
   const { upgradeOpen, upgradeMessage, handleApiError, closeUpgrade } = useUpgradeDialog();
   const [ordens, setOrdens] = useState([]);
   const [equipamentos, setEquipamentos] = useState([]);
-  const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterTipo, setFilterTipo] = useState("all");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [detailDialog, setDetailDialog] = useState({ open: false, os: null, custos: [] });
-  const [custoDialog, setCustoDialog] = useState({ open: false, os_id: null });
-  
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [detailOS, setDetailOS] = useState(null);
+  const [detailCustos, setDetailCustos] = useState([]);
+  const [showCustoModal, setShowCustoModal] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+
   const [formData, setFormData] = useState({
-    equipamento_id: "",
-    tipo: "corretiva",
-    prioridade: "media",
-    descricao: "",
-    falha_tipo: "",
-    falha_modo: "",
-    falha_causa: ""
+    equipamento_id: "", tipo: "corretiva", prioridade: "media", descricao: "",
+    falha_tipo: "", falha_modo: "", falha_causa: ""
   });
-
   const [custoForm, setCustoForm] = useState({
-    tipo: "consumo",
-    descricao: "",
-    valor: "",
-    quantidade: "1"
+    tipo: "consumo", descricao: "", valor: "", quantidade: "1"
   });
+  const [creating, setCreating] = useState(false);
 
-  const canCreateOS = true; // Todos podem criar OS
   const canEditOS = user?.role === "admin" || user?.role === "lider" || user?.role === "tecnico";
   const canReviewOS = user?.role === "admin" || user?.role === "lider";
 
@@ -88,27 +70,29 @@ export default function OrdensServicoPage() {
       const params = {};
       if (filterStatus && filterStatus !== "all") params.status = filterStatus;
       if (filterTipo && filterTipo !== "all") params.tipo = filterTipo;
-      
-      const [osRes, eqRes, grRes] = await Promise.all([
+      const [osRes, eqRes] = await Promise.all([
         getOrdensServico(params),
         getEquipamentos(),
-        getGrupos()
       ]);
-      console.log("OS data loaded:", osRes.data?.length, "orders");
       setOrdens(osRes.data || []);
       setEquipamentos(eqRes.data || []);
-      setGrupos(grRes.data || []);
+
+      // Count pending reviews
+      if (canReviewOS) {
+        try {
+          const pr = await getPendingReviews();
+          setPendingCount(pr.data?.length || 0);
+        } catch { setPendingCount(0); }
+      }
     } catch (error) {
-      console.error("Error loading OS:", error);
       toast.error("Erro ao carregar ordens de serviço");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, [filterStatus, filterTipo]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadData(); }, [filterStatus, filterTipo]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -116,33 +100,28 @@ export default function OrdensServicoPage() {
       toast.error("Preencha equipamento e descrição");
       return;
     }
+    setCreating(true);
     try {
       await createOrdemServico(formData);
-      toast.success("OS criada com sucesso");
-      setDialogOpen(false);
-      setFormData({
-        equipamento_id: "",
-        tipo: "corretiva",
-        prioridade: "media",
-        descricao: "",
-        falha_tipo: "",
-        falha_modo: "",
-        falha_causa: ""
-      });
+      toast.success("OS criada com sucesso!");
+      setShowCreateModal(false);
+      setFormData({ equipamento_id: "", tipo: "corretiva", prioridade: "media", descricao: "", falha_tipo: "", falha_modo: "", falha_causa: "" });
       loadData();
     } catch (error) {
       if (!handleApiError(error)) {
         toast.error(error.response?.data?.detail || "Erro ao criar OS");
       }
+    } finally {
+      setCreating(false);
     }
   };
 
   const handleStatusChange = async (os, newStatus) => {
     try {
       await updateOrdemServico(os.id, { status: newStatus });
-      toast.success("Status atualizado");
+      toast.success("Status atualizado!");
       loadData();
-      if (detailDialog.open) {
+      if (detailOS?.id === os.id) {
         viewOSDetail(os.id);
       }
     } catch (error) {
@@ -150,14 +129,28 @@ export default function OrdensServicoPage() {
     }
   };
 
+  const handleAutoApprove = async () => {
+    try {
+      const res = await autoApproveExpired();
+      if (res.data.auto_approved > 0) {
+        toast.success(`${res.data.auto_approved} OS auto-aprovadas`);
+      } else {
+        toast.info("Nenhuma OS expirada para auto-aprovar");
+      }
+      loadData();
+    } catch (error) {
+      toast.error("Erro ao auto-aprovar");
+    }
+  };
+
   const viewOSDetail = async (osId) => {
     const os = ordens.find(o => o.id === osId);
+    if (!os) return;
     try {
       const custosRes = await getCustos({ ordem_servico_id: osId });
-      setDetailDialog({ open: true, os, custos: custosRes.data });
-    } catch (error) {
-      setDetailDialog({ open: true, os, custos: [] });
-    }
+      setDetailCustos(custosRes.data || []);
+    } catch { setDetailCustos([]); }
+    setDetailOS(os);
   };
 
   const handleAddCusto = async (e) => {
@@ -168,26 +161,24 @@ export default function OrdensServicoPage() {
     }
     try {
       await createCusto({
-        ordem_servico_id: custoDialog.os_id,
+        ordem_servico_id: detailOS.id,
         tipo: custoForm.tipo,
         descricao: custoForm.descricao,
         valor: parseFloat(custoForm.valor),
         quantidade: parseFloat(custoForm.quantidade) || 1
       });
-      toast.success("Custo adicionado");
-      setCustoDialog({ open: false, os_id: null });
+      toast.success("Custo adicionado!");
+      setShowCustoModal(false);
       setCustoForm({ tipo: "consumo", descricao: "", valor: "", quantidade: "1" });
-      if (detailDialog.open) {
-        viewOSDetail(detailDialog.os.id);
-      }
+      if (detailOS) viewOSDetail(detailOS.id);
     } catch (error) {
       toast.error("Erro ao adicionar custo");
     }
   };
 
-  const filteredOrdens = ordens.filter(os => 
-    os.numero.toString().includes(search) ||
-    os.descricao.toLowerCase().includes(search.toLowerCase())
+  const filteredOrdens = ordens.filter(os =>
+    os.numero?.toString().includes(search) ||
+    os.descricao?.toLowerCase().includes(search.toLowerCase())
   );
 
   const getEquipamentoNome = (id) => {
@@ -195,167 +186,82 @@ export default function OrdensServicoPage() {
     return eq ? `${eq.codigo} - ${eq.nome}` : id;
   };
 
+  const getNextAction = (os) => {
+    const cfg = statusConfig[os.status];
+    if (!cfg?.next) return null;
+    if (os.status === "aberta" && !canEditOS) return null;
+    if (os.status === "em_atendimento" && !canEditOS) return null;
+    if (os.status === "aguardando_revisao" && !canReviewOS) return null;
+    if (os.status === "revisada" && !canReviewOS) return null;
+    return cfg;
+  };
+
   return (
     <div className="space-y-6" data-testid="ordens-servico-page">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="font-heading text-2xl font-bold">Ordens de Serviço</h1>
-          <p className="text-muted-foreground">{ordens.length} ordens encontradas</p>
+          <h1 className="font-heading text-2xl font-bold flex items-center gap-2">
+            <Wrench className="h-6 w-6 text-primary" />
+            Ordens de Serviço
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">{ordens.length} ordens encontradas</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="rounded-sm" data-testid="new-os-btn">
-              <Plus className="h-4 w-4 mr-2" />
-              Nova OS
+        <div className="flex gap-2">
+          {canReviewOS && pendingCount > 0 && (
+            <Button variant="outline" size="sm" className="rounded-lg h-10 border-amber-500/30 text-amber-500 hover:bg-amber-500/10" onClick={handleAutoApprove}>
+              <Clock className="h-4 w-4 mr-2" />
+              Auto-aprovar ({pendingCount})
             </Button>
-          </DialogTrigger>
-          <DialogContent className="rounded-sm max-w-lg">
-            <DialogHeader>
-              <DialogTitle className="font-heading">Nova Ordem de Serviço</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="equipamento">Equipamento *</Label>
-                <Select
-                  value={formData.equipamento_id}
-                  onValueChange={(v) => setFormData({ ...formData, equipamento_id: v })}
-                >
-                  <SelectTrigger className="rounded-sm" data-testid="os-equipamento-select">
-                    <SelectValue placeholder="Selecione o equipamento" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {equipamentos.map((eq) => (
-                      <SelectItem key={eq.id} value={eq.id}>
-                        {eq.codigo} - {eq.nome}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Tipo</Label>
-                  <Select
-                    value={formData.tipo}
-                    onValueChange={(v) => setFormData({ ...formData, tipo: v })}
-                  >
-                    <SelectTrigger className="rounded-sm" data-testid="os-tipo-select">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="corretiva">Corretiva</SelectItem>
-                      <SelectItem value="preventiva">Preventiva</SelectItem>
-                      <SelectItem value="preditiva">Preditiva</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Prioridade</Label>
-                  <Select
-                    value={formData.prioridade}
-                    onValueChange={(v) => setFormData({ ...formData, prioridade: v })}
-                  >
-                    <SelectTrigger className="rounded-sm" data-testid="os-prioridade-select">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="baixa">Baixa</SelectItem>
-                      <SelectItem value="media">Média</SelectItem>
-                      <SelectItem value="alta">Alta</SelectItem>
-                      <SelectItem value="critica">Crítica</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="descricao">Descrição *</Label>
-                <Textarea
-                  id="descricao"
-                  value={formData.descricao}
-                  onChange={(e) => setFormData({ ...formData, descricao: e.target.value })}
-                  placeholder="Descreva o problema ou serviço necessário"
-                  className="rounded-sm"
-                  rows={3}
-                  data-testid="os-descricao-input"
-                />
-              </div>
-
-              {formData.tipo === "corretiva" && (
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="space-y-2">
-                    <Label className="text-xs">Tipo de Falha</Label>
-                    <Input
-                      value={formData.falha_tipo}
-                      onChange={(e) => setFormData({ ...formData, falha_tipo: e.target.value })}
-                      placeholder="Mecânica"
-                      className="rounded-sm text-sm"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Modo de Falha</Label>
-                    <Input
-                      value={formData.falha_modo}
-                      onChange={(e) => setFormData({ ...formData, falha_modo: e.target.value })}
-                      placeholder="Desgaste"
-                      className="rounded-sm text-sm"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Causa</Label>
-                    <Input
-                      value={formData.falha_causa}
-                      onChange={(e) => setFormData({ ...formData, falha_causa: e.target.value })}
-                      placeholder="Uso"
-                      className="rounded-sm text-sm"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} className="rounded-sm">
-                  Cancelar
-                </Button>
-                <Button type="submit" className="rounded-sm" data-testid="save-os-btn">
-                  Criar OS
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
+          )}
+          <Button onClick={() => setShowCreateModal(true)} className="rounded-lg h-10 shadow-lg shadow-primary/20" data-testid="new-os-btn">
+            <Plus className="h-4 w-4 mr-2" />
+            Nova OS
+          </Button>
+        </div>
       </div>
+
+      {/* Pending Reviews Banner */}
+      {canReviewOS && pendingCount > 0 && (
+        <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-amber-500/8 border border-amber-500/15 animate-slide-in-bottom">
+          <div className="flex items-center gap-2.5">
+            <Shield className="h-5 w-5 text-amber-500" />
+            <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
+              {pendingCount} OS aguardando sua revisão (SLA: 24h)
+            </span>
+          </div>
+          <Button size="sm" variant="outline" className="rounded-lg h-8 border-amber-500/30 text-amber-500" onClick={() => setFilterStatus("aguardando_revisao")}>
+            Ver pendentes
+          </Button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por número ou descrição..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 rounded-sm"
+            className="pl-10 h-10 rounded-lg bg-card"
             data-testid="search-os-input"
           />
         </div>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="w-[180px] rounded-sm" data-testid="filter-status-select">
+          <SelectTrigger className="w-[180px] rounded-lg h-10" data-testid="filter-status-select">
             <Filter className="h-4 w-4 mr-2" />
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
-            <SelectItem value="aberta">Aberta</SelectItem>
-            <SelectItem value="em_atendimento">Em Atendimento</SelectItem>
-            <SelectItem value="aguardando_revisao">Aguardando Revisão</SelectItem>
-            <SelectItem value="revisada">Revisada</SelectItem>
-            <SelectItem value="fechada">Fechada</SelectItem>
+            {Object.entries(statusConfig).map(([k, v]) => (
+              <SelectItem key={k} value={k}>{v.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={filterTipo} onValueChange={setFilterTipo}>
-          <SelectTrigger className="w-[150px] rounded-sm" data-testid="filter-tipo-select">
+          <SelectTrigger className="w-[150px] rounded-lg h-10" data-testid="filter-tipo-select">
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
           <SelectContent>
@@ -367,440 +273,454 @@ export default function OrdensServicoPage() {
         </Select>
       </div>
 
-      {/* Table */}
-      <div className="border border-border rounded-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full table-dense">
-            <thead className="bg-muted">
-              <tr>
-                <th className="text-left font-medium p-3">Nº</th>
-                <th className="text-left font-medium p-3">Equipamento</th>
-                <th className="text-center font-medium p-3">Tipo</th>
-                <th className="text-center font-medium p-3">Prioridade</th>
-                <th className="text-center font-medium p-3">Status</th>
-                <th className="text-left font-medium p-3 hidden lg:table-cell">Data</th>
-                <th className="text-right font-medium p-3 hidden md:table-cell">Custo Parada</th>
-                <th className="text-right font-medium p-3">Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={8} className="text-center p-8 text-muted-foreground">
-                    Carregando...
-                  </td>
-                </tr>
-              ) : filteredOrdens.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="text-center p-8 text-muted-foreground">
-                    Nenhuma OS encontrada
-                  </td>
-                </tr>
-              ) : (
-                filteredOrdens.map((os) => (
-                  <tr key={os.id} className="border-t border-border hover:bg-muted/50" data-testid={`os-row-${os.numero}`}>
-                    <td className="p-3">
-                      <span className="font-mono font-medium">#{os.numero}</span>
-                      {os.reincidente && (
-                        <Badge className="ml-2 bg-orange-500/10 text-orange-600 rounded-sm text-xs">
-                          Reincidente
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <div className="text-sm truncate max-w-[200px]">{os.equipamento_nome || getEquipamentoNome(os.equipamento_id)}</div>
-                      <div className="text-xs text-muted-foreground truncate max-w-[200px]">{os.descricao}</div>
-                    </td>
-                    <td className="p-3 text-center">
-                      <Badge className={`${tipoConfig[os.tipo]?.color} rounded-sm`}>
-                        {tipoConfig[os.tipo]?.label}
-                      </Badge>
-                    </td>
-                    <td className="p-3 text-center">
-                      <Badge className={`${prioridadeConfig[os.prioridade]?.color} rounded-sm`}>
-                        {prioridadeConfig[os.prioridade]?.label}
-                      </Badge>
-                    </td>
-                    <td className="p-3 text-center">
-                      <Badge className={`${statusConfig[os.status]?.color} rounded-sm`}>
-                        {statusConfig[os.status]?.label}
-                      </Badge>
-                      {!os.dentro_sla && os.status !== "fechada" && (
-                        <Badge className="ml-1 bg-red-500 text-white rounded-sm text-xs">SLA</Badge>
-                      )}
-                    </td>
-                    <td className="p-3 hidden lg:table-cell text-sm text-muted-foreground">
-                      {new Date(os.created_at).toLocaleDateString('pt-BR')}
-                    </td>
-                    <td className="p-3 text-right hidden md:table-cell">
-                      {os.custo_parada != null ? (
-                        <span className="font-mono text-sm font-semibold text-red-600 dark:text-red-400">
-                          R$ {os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">-</span>
-                      )}
-                    </td>
-                    <td className="p-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => viewOSDetail(os.id)}
-                          data-testid={`view-os-${os.numero}`}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        {canEditOS && os.status === "aberta" && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleStatusChange(os, "em_atendimento")}
-                            data-testid={`start-os-${os.numero}`}
-                          >
-                            <Play className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      {/* OS Cards */}
+      {loading ? (
+        <div className="flex items-center justify-center h-40">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
-      </div>
+      ) : filteredOrdens.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+          <Wrench className="h-10 w-10 mb-3 opacity-40" />
+          <p className="font-medium">Nenhuma OS encontrada</p>
+        </div>
+      ) : (
+        <div className="space-y-3 stagger-children">
+          {filteredOrdens.map((os) => {
+            const sc = statusConfig[os.status] || statusConfig.aberta;
+            const StatusIcon = sc.icon;
+            const tc = tipoConfig[os.tipo] || tipoConfig.corretiva;
+            const pc = prioridadeConfig[os.prioridade] || prioridadeConfig.media;
+            const nextAction = getNextAction(os);
 
-      {/* Detail Dialog */}
-      <Dialog open={detailDialog.open} onOpenChange={(open) => setDetailDialog({ open, os: null, custos: [] })}>
-        <DialogContent className="rounded-sm max-w-2xl max-h-[85vh] overflow-y-auto">
-          {detailDialog.os && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="font-heading flex items-center gap-2">
-                  OS #{detailDialog.os.numero}
-                  <Badge className={`${statusConfig[detailDialog.os.status]?.color} rounded-sm`}>
-                    {statusConfig[detailDialog.os.status]?.label}
-                  </Badge>
-                </DialogTitle>
-              </DialogHeader>
-
-              <Tabs defaultValue="info" className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="info">Informações</TabsTrigger>
-                  <TabsTrigger value="tempos">Tempos</TabsTrigger>
-                  <TabsTrigger value="custos">Custos</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="info" className="space-y-4 mt-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Equipamento</p>
-                      <p className="font-medium">{getEquipamentoNome(detailDialog.os.equipamento_id)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Tipo</p>
-                      <Badge className={`${tipoConfig[detailDialog.os.tipo]?.color} rounded-sm`}>
-                        {tipoConfig[detailDialog.os.tipo]?.label}
-                      </Badge>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Prioridade</p>
-                      <Badge className={`${prioridadeConfig[detailDialog.os.prioridade]?.color} rounded-sm`}>
-                        {prioridadeConfig[detailDialog.os.prioridade]?.label}
-                      </Badge>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">SLA</p>
-                      <Badge className={`rounded-sm ${detailDialog.os.dentro_sla ? 'bg-green-500/10 text-green-600' : 'bg-red-500/10 text-red-600'}`}>
-                        {detailDialog.os.dentro_sla ? 'Dentro do SLA' : 'Fora do SLA'}
-                      </Badge>
+            return (
+              <div
+                key={os.id}
+                className={`border border-border/50 rounded-xl bg-card p-4 card-hover group cursor-pointer transition-all ${
+                  os.status === 'aguardando_revisao' ? 'border-l-4 border-l-amber-500' :
+                  os.prioridade === 'critica' && os.status !== 'fechada' ? 'border-l-4 border-l-red-500' : ''
+                }`}
+                onClick={() => viewOSDetail(os.id)}
+                data-testid={`os-row-${os.numero}`}
+              >
+                <div className="flex items-center gap-4">
+                  {/* Number + Status */}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-center">
+                      <span className="font-mono text-lg font-bold leading-none">#{os.numero}</span>
+                      {os.reincidente && (
+                        <div className="mt-1">
+                          <span className="text-[9px] font-bold text-orange-500 bg-orange-500/10 px-1.5 py-0.5 rounded">🔁 REINC.</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div>
-                    <p className="text-xs text-muted-foreground">Descrição</p>
-                    <p className="mt-1">{detailDialog.os.descricao}</p>
-                  </div>
-
-                  {detailDialog.os.solucao && (
-                    <div>
-                      <p className="text-xs text-muted-foreground">Solução</p>
-                      <p className="mt-1">{detailDialog.os.solucao}</p>
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-sm font-medium truncate">
+                        {os.equipamento_nome || getEquipamentoNome(os.equipamento_id)}
+                      </span>
+                      <Badge className={`${tc.color} text-[10px] border rounded`}>{tc.label}</Badge>
+                      <Badge className={`${pc.color} text-[10px] border rounded`}>{pc.label}</Badge>
+                      {!os.dentro_sla && os.status !== "fechada" && (
+                        <Badge className="bg-red-500 text-white text-[10px] rounded">SLA</Badge>
+                      )}
                     </div>
-                  )}
+                    <p className="text-xs text-muted-foreground truncate">{os.descricao}</p>
+                  </div>
 
                   {/* Downtime Cost */}
-                  {detailDialog.os.custo_parada != null && (
-                    <div className="p-3 border border-red-500/20 bg-red-500/5 rounded-sm">
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <DollarSign className="h-3 w-3" /> Custo de Parada (Máquina Parada)
-                      </p>
-                      <p className="text-xl font-heading font-bold text-red-600 dark:text-red-400 mt-1">
-                        R$ {detailDialog.os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </p>
-                      {detailDialog.os.tempo_total && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {(detailDialog.os.tempo_total / 60).toFixed(1)}h parada
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Review Info */}
-                  {(detailDialog.os.status === "aguardando_revisao" || detailDialog.os.status === "revisada") && (
-                    <div className="p-3 border border-amber-500/20 bg-amber-500/5 rounded-sm space-y-2">
-                      <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                        <FileCheck className="h-3 w-3" /> Revisão
-                      </p>
-                      {detailDialog.os.revisor_nome && (
-                        <p className="text-sm"><span className="text-muted-foreground">Revisor:</span> {detailDialog.os.revisor_nome}</p>
-                      )}
-                      {detailDialog.os.review_deadline && (
-                        <p className="text-sm">
-                          <span className="text-muted-foreground">Prazo:</span>{" "}
-                          {new Date(detailDialog.os.review_deadline).toLocaleString('pt-BR')}
-                          {detailDialog.os.status === "aguardando_revisao" && new Date(detailDialog.os.review_deadline) < new Date() && (
-                            <Badge className="ml-2 bg-red-500/10 text-red-600 rounded-sm text-xs">Expirado</Badge>
-                          )}
-                        </p>
-                      )}
-                      {detailDialog.os.auto_approved && (
-                        <Badge className="bg-amber-500/10 text-amber-600 rounded-sm text-xs">Auto-aprovada</Badge>
-                      )}
-                      {detailDialog.os.review_notes && (
-                        <p className="text-sm"><span className="text-muted-foreground">Notas:</span> {detailDialog.os.review_notes}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {detailDialog.os.tipo === "corretiva" && (detailDialog.os.falha_tipo || detailDialog.os.falha_modo || detailDialog.os.falha_causa) && (
-                    <div className="grid grid-cols-3 gap-4 p-3 bg-muted rounded-sm">
-                      <div>
-                        <p className="text-xs text-muted-foreground">Tipo de Falha</p>
-                        <p className="text-sm">{detailDialog.os.falha_tipo || '-'}</p>
+                  <div className="hidden md:flex flex-col items-end shrink-0">
+                    {os.custo_parada != null && os.custo_parada > 0 ? (
+                      <div className="text-right">
+                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                          <TrendingDown className="h-3 w-3 text-red-500" /> Parada
+                        </span>
+                        <span className="font-mono text-sm font-bold text-red-500">
+                          R$ {os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+                        </span>
                       </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Modo</p>
-                        <p className="text-sm">{detailDialog.os.falha_modo || '-'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-muted-foreground">Causa</p>
-                        <p className="text-sm">{detailDialog.os.falha_causa || '-'}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  <div className="flex flex-wrap gap-2 pt-4 border-t border-border">
-                    {canEditOS && detailDialog.os.status === "aberta" && (
-                      <Button size="sm" onClick={() => handleStatusChange(detailDialog.os, "em_atendimento")} className="rounded-sm">
-                        <Play className="h-4 w-4 mr-2" />
-                        Iniciar Atendimento
-                      </Button>
-                    )}
-                    {canEditOS && detailDialog.os.status === "em_atendimento" && (
-                      <Button size="sm" onClick={() => handleStatusChange(detailDialog.os, "aguardando_revisao")} className="rounded-sm">
-                        <Clock className="h-4 w-4 mr-2" />
-                        Enviar para Revisão
-                      </Button>
-                    )}
-                    {canReviewOS && detailDialog.os.status === "aguardando_revisao" && (
-                      <Button size="sm" onClick={() => handleStatusChange(detailDialog.os, "revisada")} className="rounded-sm">
-                        <CheckCircle className="h-4 w-4 mr-2" />
-                        Aprovar Revisão
-                      </Button>
-                    )}
-                    {canReviewOS && detailDialog.os.status === "revisada" && (
-                      <Button size="sm" onClick={() => handleStatusChange(detailDialog.os, "fechada")} className="rounded-sm">
-                        <FileCheck className="h-4 w-4 mr-2" />
-                        Fechar OS
-                      </Button>
-                    )}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="tempos" className="space-y-4 mt-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-3 border border-border rounded-sm">
-                      <p className="text-xs text-muted-foreground">Abertura</p>
-                      <p className="font-medium">{new Date(detailDialog.os.created_at).toLocaleString('pt-BR')}</p>
-                    </div>
-                    {detailDialog.os.inicio_atendimento && (
-                      <div className="p-3 border border-border rounded-sm">
-                        <p className="text-xs text-muted-foreground">Início Atendimento</p>
-                        <p className="font-medium">{new Date(detailDialog.os.inicio_atendimento).toLocaleString('pt-BR')}</p>
-                      </div>
-                    )}
-                    {detailDialog.os.fim_atendimento && (
-                      <div className="p-3 border border-border rounded-sm">
-                        <p className="text-xs text-muted-foreground">Fim Atendimento</p>
-                        <p className="font-medium">{new Date(detailDialog.os.fim_atendimento).toLocaleString('pt-BR')}</p>
-                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="p-3 bg-muted rounded-sm text-center">
-                      <p className="text-xs text-muted-foreground">Tempo Resposta</p>
-                      <p className="text-xl font-heading font-bold">
-                        {detailDialog.os.tempo_resposta ? `${detailDialog.os.tempo_resposta} min` : '-'}
-                      </p>
-                    </div>
-                    <div className="p-3 bg-muted rounded-sm text-center">
-                      <p className="text-xs text-muted-foreground">Tempo Reparo</p>
-                      <p className="text-xl font-heading font-bold">
-                        {detailDialog.os.tempo_reparo ? `${detailDialog.os.tempo_reparo} min` : '-'}
-                      </p>
-                    </div>
-                    <div className="p-3 bg-muted rounded-sm text-center">
-                      <p className="text-xs text-muted-foreground">Tempo Total</p>
-                      <p className="text-xl font-heading font-bold">
-                        {detailDialog.os.tempo_total ? `${detailDialog.os.tempo_total} min` : '-'}
-                      </p>
-                    </div>
+                  {/* Status + Quick Action */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge className={`${sc.color} rounded-lg px-2.5 py-1 text-xs border`}>
+                      <StatusIcon className="h-3 w-3 mr-1" />
+                      {sc.label}
+                    </Badge>
+                    {nextAction && (
+                      <Button
+                        size="sm"
+                        className="h-8 rounded-lg text-xs px-3 shadow-sm"
+                        onClick={(e) => { e.stopPropagation(); handleStatusChange(os, nextAction.next); }}
+                      >
+                        <ArrowRight className="h-3 w-3 mr-1" />
+                        {nextAction.nextLabel}
+                      </Button>
+                    )}
                   </div>
-                </TabsContent>
+                </div>
 
-                <TabsContent value="custos" className="space-y-4 mt-4">
-                  {canEditOS && detailDialog.os.status !== "fechada" && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setCustoDialog({ open: true, os_id: detailDialog.os.id })}
-                      className="rounded-sm"
-                      data-testid="add-custo-btn"
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Adicionar Custo
+                {/* Review deadline warning */}
+                {os.status === "aguardando_revisao" && os.review_deadline && (
+                  <div className="mt-2 flex items-center gap-2 text-xs">
+                    <Timer className="h-3 w-3 text-amber-500" />
+                    <span className={`${new Date(os.review_deadline) < new Date() ? 'text-red-500 font-semibold' : 'text-amber-500'}`}>
+                      Prazo revisão: {new Date(os.review_deadline).toLocaleString('pt-BR')}
+                      {new Date(os.review_deadline) < new Date() && " — EXPIRADO"}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ===== OS Detail Drawer ===== */}
+      {detailOS && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setDetailOS(null)}>
+          <div className="bg-card border-l border-border w-full max-w-lg h-full overflow-y-auto shadow-2xl animate-slide-in-right" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 bg-card/95 backdrop-blur-xl border-b border-border/50 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="font-heading text-xl font-bold">OS #{detailOS.numero}</span>
+                  <Badge className={`${statusConfig[detailOS.status]?.color} rounded-lg text-xs border`}>
+                    {statusConfig[detailOS.status]?.label}
+                  </Badge>
+                </div>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setDetailOS(null)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Quick Actions — LARGE BUTTONS */}
+              {(() => {
+                const next = getNextAction(detailOS);
+                if (!next) return null;
+                return (
+                  <Button
+                    className="w-full h-12 rounded-xl text-base font-semibold shadow-lg shadow-primary/20"
+                    onClick={() => handleStatusChange(detailOS, next.next)}
+                  >
+                    <ArrowRight className="h-5 w-5 mr-2" />
+                    {next.nextLabel} OS
+                  </Button>
+                );
+              })()}
+
+              {/* Info Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-muted/30">
+                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Equipamento</p>
+                  <p className="text-sm font-medium mt-1 truncate">{getEquipamentoNome(detailOS.equipamento_id)}</p>
+                </div>
+                <div className="p-3 rounded-xl bg-muted/30">
+                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Tipo</p>
+                  <Badge className={`${tipoConfig[detailOS.tipo]?.color} text-xs border rounded mt-1`}>
+                    {tipoConfig[detailOS.tipo]?.label}
+                  </Badge>
+                </div>
+                <div className="p-3 rounded-xl bg-muted/30">
+                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Prioridade</p>
+                  <Badge className={`${prioridadeConfig[detailOS.prioridade]?.color} text-xs border rounded mt-1`}>
+                    {prioridadeConfig[detailOS.prioridade]?.label}
+                  </Badge>
+                </div>
+                <div className="p-3 rounded-xl bg-muted/30">
+                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">SLA</p>
+                  <Badge className={`text-xs border rounded mt-1 ${detailOS.dentro_sla ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-red-500/10 text-red-500 border-red-500/20'}`}>
+                    {detailOS.dentro_sla ? '✅ Dentro' : '❌ Fora'}
+                  </Badge>
+                </div>
+              </div>
+
+              {/* Recurrence Warning */}
+              {detailOS.reincidente && (
+                <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-orange-500/8 border border-orange-500/15">
+                  <AlertTriangle className="h-5 w-5 text-orange-500" />
+                  <div>
+                    <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">Falha Reincidente</p>
+                    <p className="text-xs text-muted-foreground">Mesma falha detectada nos últimos 30 dias</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Description */}
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider mb-1">Descrição</p>
+                <p className="text-sm leading-relaxed">{detailOS.descricao}</p>
+              </div>
+
+              {detailOS.solucao && (
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider mb-1">Solução</p>
+                  <p className="text-sm leading-relaxed">{detailOS.solucao}</p>
+                </div>
+              )}
+
+              {/* Downtime Cost */}
+              {detailOS.custo_parada != null && detailOS.custo_parada > 0 && (
+                <div className="p-4 rounded-xl bg-red-500/5 border border-red-500/15">
+                  <p className="text-xs font-semibold text-red-500 flex items-center gap-1.5 mb-2">
+                    <TrendingDown className="h-4 w-4" /> Impacto Financeiro (Máquina Parada)
+                  </p>
+                  <p className="text-2xl font-heading font-bold text-red-500">
+                    R$ {detailOS.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                  {detailOS.tempo_total && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {(detailOS.tempo_total / 60).toFixed(1)}h de máquina parada
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Review Section */}
+              {(detailOS.status === "aguardando_revisao" || detailOS.status === "revisada") && (
+                <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/15 space-y-2">
+                  <p className="text-xs font-semibold text-amber-500 flex items-center gap-1.5">
+                    <Shield className="h-4 w-4" /> Revisão de Qualidade
+                  </p>
+                  {detailOS.revisor_nome && (
+                    <p className="text-sm"><span className="text-muted-foreground">Revisor:</span> {detailOS.revisor_nome}</p>
+                  )}
+                  {detailOS.review_deadline && (
+                    <p className="text-sm">
+                      <span className="text-muted-foreground">Prazo:</span>{" "}
+                      {new Date(detailOS.review_deadline).toLocaleString('pt-BR')}
+                      {detailOS.status === "aguardando_revisao" && new Date(detailOS.review_deadline) < new Date() && (
+                        <Badge className="ml-2 bg-red-500/10 text-red-500 text-[10px] rounded border border-red-500/20">Expirado</Badge>
+                      )}
+                    </p>
+                  )}
+                  {detailOS.auto_approved && (
+                    <Badge className="bg-amber-500/10 text-amber-500 text-[10px] rounded border border-amber-500/20">Auto-aprovada (24h expirado)</Badge>
+                  )}
+                  {detailOS.review_notes && (
+                    <p className="text-sm"><span className="text-muted-foreground">Notas:</span> {detailOS.review_notes}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Failure Analysis */}
+              {detailOS.tipo === "corretiva" && (detailOS.falha_tipo || detailOS.falha_modo || detailOS.falha_causa) && (
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: "Tipo Falha", value: detailOS.falha_tipo },
+                    { label: "Modo", value: detailOS.falha_modo },
+                    { label: "Causa", value: detailOS.falha_causa },
+                  ].map((f, i) => (
+                    <div key={i} className="p-3 bg-muted/30 rounded-xl">
+                      <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">{f.label}</p>
+                      <p className="text-sm mt-0.5">{f.value || '—'}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Timing */}
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: "Resposta", value: detailOS.tempo_resposta ? `${detailOS.tempo_resposta} min` : '—' },
+                  { label: "Reparo", value: detailOS.tempo_reparo ? `${detailOS.tempo_reparo} min` : '—' },
+                  { label: "Total", value: detailOS.tempo_total ? `${detailOS.tempo_total} min` : '—' },
+                ].map((t, i) => (
+                  <div key={i} className="p-3 bg-muted/30 rounded-xl text-center">
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">{t.label}</p>
+                    <p className="text-lg font-heading font-bold mt-1">{t.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Costs */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Custos</p>
+                  {canEditOS && detailOS.status !== "fechada" && (
+                    <Button size="sm" variant="outline" className="h-7 rounded-lg text-xs" onClick={() => setShowCustoModal(true)}>
+                      <Plus className="h-3 w-3 mr-1" /> Adicionar
                     </Button>
                   )}
-
-                  {detailDialog.custos.length === 0 ? (
-                    <p className="text-muted-foreground text-center py-4">Nenhum custo registrado</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {detailDialog.custos.map((custo) => (
-                        <div key={custo.id} className="flex items-center justify-between p-3 border border-border rounded-sm">
-                          <div>
-                            <Badge className="rounded-sm text-xs mb-1">{custo.tipo}</Badge>
-                            <p className="text-sm">{custo.descricao}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-heading font-bold">
-                              R$ {(custo.valor * custo.quantidade).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {custo.quantidade} x R$ {custo.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </p>
-                          </div>
+                </div>
+                {detailCustos.length > 0 ? (
+                  <div className="space-y-2">
+                    {detailCustos.map((c) => (
+                      <div key={c.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30">
+                        <div>
+                          <Badge className="text-[10px] rounded mb-0.5">{c.tipo}</Badge>
+                          <p className="text-xs">{c.descricao}</p>
                         </div>
-                      ))}
-                      <div className="flex justify-between p-3 bg-muted rounded-sm">
-                        <p className="font-medium">Total Custos Diretos</p>
-                        <p className="font-heading font-bold">
-                          R$ {detailDialog.custos.reduce((acc, c) => acc + c.valor * c.quantidade, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </p>
+                        <span className="font-mono text-sm font-semibold">
+                          R$ {(c.valor * c.quantidade).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
                       </div>
-                      {detailDialog.os.custo_parada != null && (
-                        <>
-                          <div className="flex justify-between p-3 bg-red-500/5 border border-red-500/10 rounded-sm">
-                            <p className="font-medium text-red-600 dark:text-red-400">Custo Parada</p>
-                            <p className="font-heading font-bold text-red-600 dark:text-red-400">
-                              R$ {detailDialog.os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </p>
-                          </div>
-                          <div className="flex justify-between p-3 bg-primary/5 border border-primary/10 rounded-sm">
-                            <p className="font-semibold">Impacto Total</p>
-                            <p className="font-heading font-bold text-primary">
-                              R$ {(detailDialog.custos.reduce((acc, c) => acc + c.valor * c.quantidade, 0) + (detailDialog.os.custo_parada || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </p>
-                          </div>
-                        </>
-                      )}
+                    ))}
+                    <div className="flex justify-between p-3 rounded-xl bg-muted/50 font-semibold text-sm">
+                      <span>Total Manutenção</span>
+                      <span className="font-mono">
+                        R$ {detailCustos.reduce((a, c) => a + c.valor * c.quantidade, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
                     </div>
-                  )}
-                </TabsContent>
-              </Tabs>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Custo Dialog */}
-      <Dialog open={custoDialog.open} onOpenChange={(open) => setCustoDialog({ open, os_id: null })}>
-        <DialogContent className="rounded-sm">
-          <DialogHeader>
-            <DialogTitle className="font-heading">Adicionar Custo</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleAddCusto} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Tipo de Custo</Label>
-              <Select
-                value={custoForm.tipo}
-                onValueChange={(v) => setCustoForm({ ...custoForm, tipo: v })}
-              >
-                <SelectTrigger className="rounded-sm" data-testid="custo-tipo-select">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="consumo">Consumo</SelectItem>
-                  <SelectItem value="substituicao">Substituição</SelectItem>
-                  <SelectItem value="mao_obra">Mão de Obra</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="custo_descricao">Descrição *</Label>
-              <Input
-                id="custo_descricao"
-                value={custoForm.descricao}
-                onChange={(e) => setCustoForm({ ...custoForm, descricao: e.target.value })}
-                placeholder="Descrição do custo"
-                className="rounded-sm"
-                data-testid="custo-descricao-input"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="custo_valor">Valor Unitário (R$) *</Label>
-                <Input
-                  id="custo_valor"
-                  type="number"
-                  step="0.01"
-                  value={custoForm.valor}
-                  onChange={(e) => setCustoForm({ ...custoForm, valor: e.target.value })}
-                  placeholder="100.00"
-                  className="rounded-sm"
-                  data-testid="custo-valor-input"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="custo_quantidade">Quantidade</Label>
-                <Input
-                  id="custo_quantidade"
-                  type="number"
-                  step="1"
-                  value={custoForm.quantidade}
-                  onChange={(e) => setCustoForm({ ...custoForm, quantidade: e.target.value })}
-                  className="rounded-sm"
-                />
+                    {detailOS.custo_parada != null && detailOS.custo_parada > 0 && (
+                      <div className="flex justify-between p-3 rounded-xl bg-primary/5 border border-primary/10 font-bold text-sm">
+                        <span>Impacto Total</span>
+                        <span className="font-mono text-primary">
+                          R$ {(detailCustos.reduce((a, c) => a + c.valor * c.quantidade, 0) + detailOS.custo_parada).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-4">Nenhum custo registrado</p>
+                )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
 
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setCustoDialog({ open: false, os_id: null })} className="rounded-sm">
-                Cancelar
-              </Button>
-              <Button type="submit" className="rounded-sm" data-testid="save-custo-btn">
-                Salvar
+      {/* ===== Create OS Modal ===== */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setShowCreateModal(false)}>
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-lg shadow-2xl animate-slide-in-bottom" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-heading font-bold text-lg">Nova Ordem de Serviço</h2>
+              <Button variant="ghost" size="icon" onClick={() => setShowCreateModal(false)}>
+                <X className="h-4 w-4" />
               </Button>
             </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Equipamento *</Label>
+                <Select value={formData.equipamento_id} onValueChange={(v) => setFormData({ ...formData, equipamento_id: v })}>
+                  <SelectTrigger className="rounded-lg h-10" data-testid="os-equipamento-select">
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {equipamentos.map((eq) => (
+                      <SelectItem key={eq.id} value={eq.id}>{eq.codigo} - {eq.nome}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Tipo</Label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {Object.entries(tipoConfig).map(([k, v]) => (
+                      <button key={k} type="button"
+                        className={`text-xs px-2 py-2 rounded-lg border transition-all font-medium ${formData.tipo === k ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-muted/50 hover:bg-muted'}`}
+                        onClick={() => setFormData({ ...formData, tipo: k })}
+                      >{v.label}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Prioridade</Label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {Object.entries(prioridadeConfig).map(([k, v]) => (
+                      <button key={k} type="button"
+                        className={`text-xs px-2 py-2 rounded-lg border transition-all font-medium ${formData.prioridade === k ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-muted/50 hover:bg-muted'}`}
+                        onClick={() => setFormData({ ...formData, prioridade: k })}
+                      >{v.label}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Descrição *</Label>
+                <Textarea
+                  value={formData.descricao}
+                  onChange={(e) => setFormData({ ...formData, descricao: e.target.value })}
+                  placeholder="Descreva o problema ou serviço"
+                  className="rounded-lg"
+                  rows={3}
+                  data-testid="os-descricao-input"
+                />
+              </div>
+
+              {formData.tipo === "corretiva" && (
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { key: "falha_tipo", label: "Tipo Falha", ph: "Mecânica" },
+                    { key: "falha_modo", label: "Modo", ph: "Desgaste" },
+                    { key: "falha_causa", label: "Causa", ph: "Uso" },
+                  ].map((f) => (
+                    <div key={f.key} className="space-y-1">
+                      <Label className="text-xs">{f.label}</Label>
+                      <Input
+                        value={formData[f.key]}
+                        onChange={(e) => setFormData({ ...formData, [f.key]: e.target.value })}
+                        placeholder={f.ph}
+                        className="rounded-lg h-9 text-xs"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-2">
+                <Button type="button" variant="outline" className="flex-1 rounded-lg" onClick={() => setShowCreateModal(false)}>Cancelar</Button>
+                <Button type="submit" className="flex-1 rounded-lg" disabled={creating} data-testid="save-os-btn">
+                  {creating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Zap className="h-4 w-4 mr-2" />}
+                  Criar OS
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Add Cost Modal ===== */}
+      {showCustoModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={() => setShowCustoModal(false)}>
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm shadow-2xl animate-slide-in-bottom" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-heading font-bold mb-4">Adicionar Custo</h3>
+            <form onSubmit={handleAddCusto} className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Tipo</Label>
+                <Select value={custoForm.tipo} onValueChange={(v) => setCustoForm({ ...custoForm, tipo: v })}>
+                  <SelectTrigger className="rounded-lg h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="consumo">Consumo</SelectItem>
+                    <SelectItem value="substituicao">Substituição</SelectItem>
+                    <SelectItem value="mao_obra">Mão de Obra</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Descrição *</Label>
+                <Input value={custoForm.descricao} onChange={(e) => setCustoForm({ ...custoForm, descricao: e.target.value })} className="rounded-lg h-9" placeholder="Ex: Rolamento" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Valor (R$) *</Label>
+                  <Input type="number" step="0.01" value={custoForm.valor} onChange={(e) => setCustoForm({ ...custoForm, valor: e.target.value })} className="rounded-lg h-9" placeholder="100" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Qtd</Label>
+                  <Input type="number" value={custoForm.quantidade} onChange={(e) => setCustoForm({ ...custoForm, quantidade: e.target.value })} className="rounded-lg h-9" />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button type="button" variant="outline" className="flex-1 rounded-lg h-9" onClick={() => setShowCustoModal(false)}>Cancelar</Button>
+                <Button type="submit" className="flex-1 rounded-lg h-9">Salvar</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <UpgradeDialog open={upgradeOpen} onClose={closeUpgrade} message={upgradeMessage} />
     </div>
   );

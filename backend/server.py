@@ -933,6 +933,149 @@ async def create_user(data: UserCreate, user: User = Depends(get_current_user), 
         organization_id=str(new_user.organization_id), ativo=new_user.ativo, created_at=new_user.created_at
     )
 
+class UserUpdate(BaseModel):
+    nome: Optional[str] = None
+    role: Optional[UserRole] = None
+    ativo: Optional[bool] = None
+
+@api_router.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: str, data: UserUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode editar usuários")
+    
+    target_user = db.query(User).filter(
+        User.id == user_id,
+        User.organization_id == user.organization_id
+    ).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    
+    # Prevent admin from demoting themselves
+    if str(target_user.id) == str(user.id) and data.role and data.role != UserRole.ADMIN:
+        raise HTTPException(status_code=400, detail="Você não pode alterar seu próprio cargo de admin")
+    
+    if data.nome is not None:
+        target_user.nome = data.nome
+    if data.role is not None:
+        target_user.role = data.role
+    if data.ativo is not None:
+        # Prevent self-deactivation
+        if str(target_user.id) == str(user.id) and not data.ativo:
+            raise HTTPException(status_code=400, detail="Você não pode desativar sua própria conta")
+        target_user.ativo = data.ativo
+    
+    db.commit()
+    db.refresh(target_user)
+    
+    create_audit_log(db, str(user.organization_id), str(user.id), "user", str(target_user.id), "update")
+    
+    return UserResponse(
+        id=str(target_user.id), email=target_user.email, nome=target_user.nome, role=target_user.role.value,
+        organization_id=str(target_user.organization_id), ativo=target_user.ativo, created_at=target_user.created_at
+    )
+
+@api_router.delete("/users/{user_id}")
+async def deactivate_user(user_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode desativar usuários")
+    
+    if str(user_id) == str(user.id):
+        raise HTTPException(status_code=400, detail="Você não pode desativar sua própria conta")
+    
+    target_user = db.query(User).filter(
+        User.id == user_id,
+        User.organization_id == user.organization_id
+    ).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    
+    target_user.ativo = False
+    db.commit()
+    
+    create_audit_log(db, str(user.organization_id), str(user.id), "user", str(target_user.id), "deactivate")
+    
+    return {"message": "Usuário desativado com sucesso"}
+
+# ========== ORGANIZATION SETTINGS ==========
+class OrganizationUpdate(BaseModel):
+    nome: Optional[str] = None
+    cnpj: Optional[str] = None
+
+@api_router.get("/organization")
+async def get_organization(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get current organization details"""
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    
+    usage = get_org_usage(db, org.id)
+    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.FREE])
+    
+    return {
+        "id": str(org.id),
+        "nome": org.nome,
+        "cnpj": org.cnpj,
+        "plano": org.plano.value,
+        "subscription_status": org.subscription_status,
+        "ativo": org.ativo,
+        "created_at": org.created_at.isoformat() if org.created_at else None,
+        "limits": {
+            "max_equipamentos": limits["max_equipamentos"],
+            "max_users": limits["max_users"],
+            "max_os_mes": limits["max_os_mes"],
+        },
+        "usage": usage,
+        "features": limits.get("features", []),
+    }
+
+@api_router.put("/organization")
+async def update_organization(data: OrganizationUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Update organization details (admin only)"""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode editar a organização")
+    
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    
+    if data.nome:
+        org.nome = data.nome
+    if data.cnpj is not None:
+        org.cnpj = data.cnpj
+    
+    db.commit()
+    db.refresh(org)
+    
+    create_audit_log(db, str(user.organization_id), str(user.id), "organization", str(org.id), "update")
+    
+    return {"message": "Organização atualizada", "nome": org.nome}
+
+# ========== PASSWORD RESET ==========
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+@api_router.post("/auth/change-password")
+async def change_password(data: PasswordChange, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Change password for currently authenticated user"""
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Senha atual incorreta")
+    
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="A nova senha deve ter pelo menos 6 caracteres")
+    
+    user.password_hash = hash_password(data.new_password)
+    db.commit()
+    
+    return {"message": "Senha alterada com sucesso"}
+
 # ========== GRUPOS ENDPOINTS ==========
 @api_router.get("/grupos", response_model=List[GrupoResponse])
 async def list_grupos(user: User = Depends(get_current_user), db: Session = Depends(get_db)):

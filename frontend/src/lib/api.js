@@ -91,6 +91,12 @@ export const executarPlano = (id) => api.post(`/planos-preventivos/${id}/executa
 // Users
 export const getUsers = () => api.get('/users');
 export const createUser = (data) => api.post('/users', data);
+export const updateUser = (id, data) => api.put(`/users/${id}`, data);
+export const deleteUser = (id) => api.delete(`/users/${id}`);
+
+// Organization
+export const getOrganization = () => api.get('/organization');
+export const updateOrganization = (data) => api.put('/organization', data);
 
 // Auditoria
 export const getAuditoria = (params) => api.get('/auditoria', { params });
@@ -104,6 +110,9 @@ export const getBillingTransactions = () => api.get('/billing/transactions');
 // Reviews
 export const getPendingReviews = () => api.get('/ordens-servico/pending-reviews');
 export const autoApproveExpired = () => api.post('/ordens-servico/auto-approve');
+
+// Password
+export const changePassword = (data) => api.post('/auth/change-password', data);
 
 // Seed Demo
 export const seedDemo = () => api.post('/seed-demo');

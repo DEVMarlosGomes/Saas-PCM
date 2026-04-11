@@ -3,186 +3,199 @@ import { useAuth } from "../contexts/AuthContext";
 import { getBillingPlan, createBillingCheckout, getCheckoutStatus, getBillingTransactions } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
+import { useSearchParams } from "react-router-dom";
 import {
   CreditCard,
-  Check,
-  Crown,
   Zap,
+  Crown,
   Building2,
-  RefreshCw,
+  CheckCircle2,
   ArrowRight,
-  AlertCircle,
-  TrendingUp,
+  Loader2,
   Shield,
-  Users,
-  Settings,
-  ClipboardList,
+  Star,
+  Receipt,
+  Clock,
+  ExternalLink,
 } from "lucide-react";
 
-function UsageMeter({ label, current, max, icon: Icon }) {
-  const percent = max > 0 ? Math.min((current / max) * 100, 100) : 0;
-  const isWarning = percent >= 80;
-  const isDanger = percent >= 95;
+const planIcons = {
+  free: Shield,
+  pro: Zap,
+  enterprise: Crown,
+};
+
+const planColors = {
+  free: {
+    border: "border-border/50",
+    badge: "plan-free",
+    button: "bg-muted text-foreground hover:bg-muted/80",
+    glow: "",
+  },
+  pro: {
+    border: "border-blue-500/30",
+    badge: "plan-pro",
+    button: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20",
+    glow: "ring-1 ring-blue-500/20",
+  },
+  enterprise: {
+    border: "border-amber-500/30",
+    badge: "plan-enterprise",
+    button: "bg-gradient-to-r from-amber-500 to-purple-500 text-white hover:opacity-90 shadow-lg",
+    glow: "ring-1 ring-amber-500/20",
+  },
+};
+
+function PlanCard({ plan, planKey, currentPlan, isRecommended, onUpgrade, upgrading }) {
+  const Icon = planIcons[planKey] || Shield;
+  const colors = planColors[planKey] || planColors.free;
+  const isCurrent = currentPlan === planKey;
+  const isDowngrade = (currentPlan === "enterprise" && planKey !== "enterprise") ||
+                      (currentPlan === "pro" && planKey === "free");
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-sm">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Icon className="h-4 w-4" />
-          <span>{label}</span>
+    <div className={`relative border rounded-xl bg-card p-6 flex flex-col card-hover ${colors.border} ${isRecommended ? colors.glow : ''}`}>
+      {isRecommended && (
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+          <span className="inline-flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full shadow-lg shadow-primary/20">
+            <Star className="h-3 w-3" />
+            Recomendado
+          </span>
         </div>
-        <span className={`font-mono font-semibold ${isDanger ? 'text-red-500' : isWarning ? 'text-amber-500' : 'text-foreground'}`}>
-          {current} / {max >= 9999 ? '∞' : max}
-        </span>
+      )}
+
+      <div className="flex items-center gap-3 mb-4">
+        <div className={`p-2.5 rounded-xl ${planKey === 'free' ? 'bg-muted' : planKey === 'pro' ? 'bg-blue-500/10' : 'bg-amber-500/10'}`}>
+          <Icon className={`h-5 w-5 ${planKey === 'free' ? 'text-muted-foreground' : planKey === 'pro' ? 'text-blue-500' : 'text-amber-500'}`} />
+        </div>
+        <div>
+          <h3 className="font-heading font-bold text-lg">{plan.label}</h3>
+          {isCurrent && (
+            <span className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider">Seu plano atual</span>
+          )}
+        </div>
       </div>
-      <div className="h-2 bg-muted rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${
-            isDanger ? 'bg-red-500' : isWarning ? 'bg-amber-500' : 'bg-primary'
-          }`}
-          style={{ width: `${Math.min(percent, 100)}%` }}
-        />
+
+      <div className="mb-6">
+        <div className="flex items-baseline gap-1">
+          <span className="text-4xl font-bold font-heading">
+            {plan.price === 0 ? "Grátis" : `$${plan.price}`}
+          </span>
+          {plan.price > 0 && <span className="text-sm text-muted-foreground">/mês</span>}
+        </div>
       </div>
+
+      <div className="space-y-3 flex-1 mb-6">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Inclui:</p>
+        <div className="space-y-2.5">
+          <FeatureItem text={`${plan.max_equipamentos >= 9999 ? 'Ilimitados' : plan.max_equipamentos} equipamentos`} />
+          <FeatureItem text={`${plan.max_users >= 999 ? 'Ilimitados' : plan.max_users} usuários`} />
+          <FeatureItem text={`${plan.max_os_mes >= 9999 ? 'Ilimitadas' : plan.max_os_mes} OS/mês`} />
+          {planKey === "pro" && <FeatureItem text="Planos preventivos" />}
+          {planKey === "pro" && <FeatureItem text="Suporte prioritário" />}
+          {planKey === "enterprise" && <FeatureItem text="API de integração" />}
+          {planKey === "enterprise" && <FeatureItem text="Suporte 24/7 dedicado" />}
+          {planKey === "enterprise" && <FeatureItem text="SLA garantido" />}
+        </div>
+      </div>
+
+      <Button
+        className={`w-full h-11 rounded-lg font-semibold transition-all ${colors.button}`}
+        disabled={isCurrent || isDowngrade || upgrading}
+        onClick={() => onUpgrade(planKey)}
+      >
+        {upgrading ? (
+          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+        ) : isCurrent ? (
+          <span className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" />
+            Plano Atual
+          </span>
+        ) : isDowngrade ? (
+          "Não disponível"
+        ) : (
+          <span className="flex items-center gap-2">
+            Fazer Upgrade
+            <ArrowRight className="h-4 w-4" />
+          </span>
+        )}
+      </Button>
     </div>
   );
 }
 
-function PlanCard({ plan, label, price, features, current, onUpgrade, loading }) {
-  const isCurrent = current;
-  const planIcons = { free: Zap, pro: Crown, enterprise: Building2 };
-  const Icon = planIcons[plan] || Zap;
-
+function FeatureItem({ text }) {
   return (
-    <div className={`relative border rounded-lg p-6 transition-all ${
-      isCurrent 
-        ? 'border-primary bg-primary/5 ring-2 ring-primary/20' 
-        : 'border-border bg-card hover:border-primary/50'
-    }`}>
-      {isCurrent && (
-        <div className="absolute -top-3 left-4 bg-primary text-primary-foreground text-xs font-semibold px-3 py-1 rounded-full">
-          Plano Atual
-        </div>
-      )}
-      <div className="flex items-center gap-3 mb-4">
-        <div className={`p-2 rounded-lg ${isCurrent ? 'bg-primary/10' : 'bg-muted'}`}>
-          <Icon className={`h-6 w-6 ${isCurrent ? 'text-primary' : 'text-muted-foreground'}`} />
-        </div>
-        <div>
-          <h3 className="font-heading font-bold text-lg">{label}</h3>
-          <p className="text-2xl font-bold">
-            {price === 0 ? 'Grátis' : `$${price}`}
-            {price > 0 && <span className="text-sm font-normal text-muted-foreground">/mês</span>}
-          </p>
-        </div>
-      </div>
-      <ul className="space-y-2 mb-6">
-        {features.map((f, i) => (
-          <li key={i} className="flex items-center gap-2 text-sm">
-            <Check className="h-4 w-4 text-green-500 shrink-0" />
-            <span>{f}</span>
-          </li>
-        ))}
-      </ul>
-      {!isCurrent && plan !== 'free' && (
-        <Button 
-          className="w-full" 
-          onClick={() => onUpgrade(plan)} 
-          disabled={loading}
-        >
-          {loading ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <ArrowRight className="h-4 w-4 mr-2" />}
-          Fazer Upgrade
-        </Button>
-      )}
-      {isCurrent && (
-        <div className="text-center text-sm text-muted-foreground py-2">
-          <Shield className="h-4 w-4 inline mr-1" />
-          Seu plano ativo
-        </div>
-      )}
+    <div className="flex items-center gap-2.5">
+      <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+      <span className="text-sm text-muted-foreground">{text}</span>
     </div>
   );
 }
 
 export default function BillingPage() {
   const { user } = useAuth();
-  const [billingData, setBillingData] = useState(null);
+  const [billing, setBilling] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState(false);
+  const [searchParams] = useSearchParams();
 
-  const loadBilling = useCallback(async () => {
+  const loadData = useCallback(async () => {
     try {
-      const [planRes, txRes] = await Promise.all([
+      const [billingRes, txRes] = await Promise.all([
         getBillingPlan(),
-        getBillingTransactions().catch(() => ({ data: [] }))
+        getBillingTransactions().catch(() => ({ data: [] })),
       ]);
-      setBillingData(planRes.data);
+      setBilling(billingRes.data);
       setTransactions(txRes.data || []);
     } catch (error) {
-      console.error("Error loading billing:", error);
-      toast.error("Erro ao carregar informações de billing");
+      toast.error("Erro ao carregar plano");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    loadBilling();
-  }, [loadBilling]);
+    loadData();
+  }, [loadData]);
 
   // Check for session_id in URL (return from Stripe)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const sessionId = params.get("session_id");
+    const sessionId = searchParams.get("session_id");
     if (sessionId) {
-      pollPaymentStatus(sessionId);
-      // Clean URL
-      window.history.replaceState({}, document.title, window.location.pathname);
+      checkPayment(sessionId);
     }
-  }, []);
+  }, [searchParams]);
 
-  const pollPaymentStatus = async (sessionId, attempts = 0) => {
-    const maxAttempts = 8;
-    const pollInterval = 2000;
-
-    if (attempts >= maxAttempts) {
-      toast.info("Verifique o status do pagamento em alguns instantes.");
-      loadBilling();
-      return;
-    }
-
+  const checkPayment = async (sessionId) => {
     try {
       const res = await getCheckoutStatus(sessionId);
       if (res.data.payment_status === "paid") {
-        toast.success(`Upgrade para plano ${res.data.plan.toUpperCase()} realizado com sucesso!`);
-        loadBilling();
-        return;
-      } else if (res.data.status === "expired") {
-        toast.error("Sessão de pagamento expirada. Tente novamente.");
-        loadBilling();
-        return;
+        toast.success(`Plano atualizado para ${res.data.plan.toUpperCase()}!`);
+        loadData();
       }
-      // Keep polling
-      setTimeout(() => pollPaymentStatus(sessionId, attempts + 1), pollInterval);
     } catch (error) {
-      console.error("Poll error:", error);
-      if (attempts < maxAttempts - 1) {
-        setTimeout(() => pollPaymentStatus(sessionId, attempts + 1), pollInterval);
-      }
+      console.error("Payment check error:", error);
     }
   };
 
   const handleUpgrade = async (plan) => {
+    if (user?.role !== "admin") {
+      toast.error("Apenas administradores podem alterar o plano");
+      return;
+    }
     setUpgrading(true);
     try {
-      const originUrl = window.location.origin;
-      const res = await createBillingCheckout({ plan, origin_url: originUrl });
+      const res = await createBillingCheckout({
+        plan,
+        origin_url: window.location.origin,
+      });
       if (res.data.url) {
         window.location.href = res.data.url;
       }
     } catch (error) {
-      const detail = error.response?.data?.detail || "Erro ao iniciar checkout";
-      toast.error(detail);
+      toast.error(error.response?.data?.detail || "Erro ao iniciar checkout");
     } finally {
       setUpgrading(false);
     }
@@ -191,147 +204,103 @@ export default function BillingPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
-  const allPlans = billingData?.all_plans || {};
-  const planFeatures = {
-    free: [
-      `${allPlans.free?.max_equipamentos || 10} equipamentos`,
-      `${allPlans.free?.max_users || 5} usuários`,
-      `${allPlans.free?.max_os_mes || 50} OS/mês`,
-      "Dashboard básico",
-      "Relatórios limitados",
-    ],
-    pro: [
-      `${allPlans.pro?.max_equipamentos || 100} equipamentos`,
-      `${allPlans.pro?.max_users || 50} usuários`,
-      `${allPlans.pro?.max_os_mes || 500} OS/mês`,
-      "Dashboard completo",
-      "Relatórios avançados",
-      "Suporte prioritário",
-    ],
-    enterprise: [
-      "Equipamentos ilimitados",
-      "Usuários ilimitados",
-      "OS ilimitadas",
-      "Dashboard completo",
-      "API dedicada",
-      "Suporte 24/7",
-      "SLA customizado",
-    ],
-  };
+  const allPlans = billing?.all_plans || {};
+  const currentPlan = billing?.plano || "free";
 
   return (
-    <div className="space-y-8 max-w-6xl mx-auto" data-testid="billing-page">
+    <div className="space-y-8 max-w-5xl mx-auto" data-testid="billing-page">
       {/* Header */}
-      <div>
-        <h1 className="font-heading text-2xl font-bold flex items-center gap-2">
-          <CreditCard className="h-7 w-7 text-primary" />
-          Planos & Faturamento
+      <div className="text-center">
+        <h1 className="font-heading text-3xl font-bold flex items-center justify-center gap-3">
+          <CreditCard className="h-8 w-8 text-primary" />
+          Planos & Billing
         </h1>
-        <p className="text-muted-foreground mt-1">Gerencie sua assinatura e acompanhe o uso dos recursos</p>
+        <p className="text-muted-foreground mt-2 text-sm max-w-md mx-auto">
+          Escolha o plano ideal para o tamanho da sua operação industrial
+        </p>
       </div>
 
-      {/* Usage Overview */}
-      <div className="border border-border rounded-lg p-6 bg-card">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="font-heading font-semibold text-lg flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-primary" />
-            Uso dos Recursos
-          </h2>
-          <span className={`text-xs font-semibold px-3 py-1 rounded-full ${
-            billingData?.plano === 'enterprise' ? 'bg-purple-500/10 text-purple-500' :
-            billingData?.plano === 'pro' ? 'bg-amber-500/10 text-amber-500' :
-            'bg-muted text-muted-foreground'
-          }`}>
-            {billingData?.plano?.toUpperCase()}
-          </span>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <UsageMeter
-            label="Equipamentos"
-            current={billingData?.usage?.equipamentos || 0}
-            max={billingData?.limits?.max_equipamentos || 10}
-            icon={Settings}
+      {/* Plans Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {Object.entries(allPlans).map(([key, plan]) => (
+          <PlanCard
+            key={key}
+            planKey={key}
+            plan={plan}
+            currentPlan={currentPlan}
+            isRecommended={key === "pro"}
+            onUpgrade={handleUpgrade}
+            upgrading={upgrading}
           />
-          <UsageMeter
-            label="Usuários"
-            current={billingData?.usage?.users || 0}
-            max={billingData?.limits?.max_users || 5}
-            icon={Users}
-          />
-          <UsageMeter
-            label="OS este mês"
-            current={billingData?.usage?.os_mes || 0}
-            max={billingData?.limits?.max_os_mes || 50}
-            icon={ClipboardList}
-          />
-        </div>
+        ))}
       </div>
 
-      {/* Plan Cards */}
-      <div>
-        <h2 className="font-heading font-semibold text-lg mb-4">Escolha seu Plano</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {Object.entries(allPlans).map(([key, plan]) => (
-            <PlanCard
-              key={key}
-              plan={key}
-              label={plan.label}
-              price={plan.price}
-              features={planFeatures[key] || []}
-              current={billingData?.plano === key}
-              onUpgrade={handleUpgrade}
-              loading={upgrading}
-            />
-          ))}
+      {/* Current Usage */}
+      {billing && (
+        <div className="border border-border/50 rounded-xl bg-card p-6 card-hover">
+          <h3 className="font-heading font-semibold flex items-center gap-2 mb-4">
+            <Shield className="h-5 w-5 text-primary" />
+            Uso atual do plano {currentPlan.toUpperCase()}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[
+              { label: "Equipamentos", current: billing.usage?.equipamentos, max: billing.limits?.max_equipamentos, percent: billing.usage_percent?.equipamentos },
+              { label: "Usuários", current: billing.usage?.users, max: billing.limits?.max_users, percent: billing.usage_percent?.users },
+              { label: "OS este mês", current: billing.usage?.os_mes, max: billing.limits?.max_os_mes, percent: billing.usage_percent?.os_mes },
+            ].map((item) => (
+              <div key={item.label} className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="font-medium">{item.label}</span>
+                  <span className="font-mono font-semibold">{item.current || 0}/{item.max || 0}</span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${
+                      (item.percent || 0) >= 95 ? 'bg-red-500' :
+                      (item.percent || 0) >= 80 ? 'bg-amber-500' : 'bg-primary'
+                    }`}
+                    style={{ width: `${Math.min(item.percent || 0, 100)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Transaction History */}
+      {/* Transactions */}
       {transactions.length > 0 && (
-        <div className="border border-border rounded-lg p-6 bg-card">
-          <h2 className="font-heading font-semibold text-lg mb-4 flex items-center gap-2">
-            <CreditCard className="h-5 w-5" />
-            Histórico de Transações
-          </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2 px-3 font-medium text-muted-foreground">Data</th>
-                  <th className="text-left py-2 px-3 font-medium text-muted-foreground">Plano</th>
-                  <th className="text-left py-2 px-3 font-medium text-muted-foreground">Valor</th>
-                  <th className="text-left py-2 px-3 font-medium text-muted-foreground">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((tx) => (
-                  <tr key={tx.id} className="border-b border-border/50">
-                    <td className="py-2 px-3">
-                      {tx.created_at ? new Date(tx.created_at).toLocaleDateString('pt-BR') : '-'}
-                    </td>
-                    <td className="py-2 px-3 font-medium uppercase">{tx.plan}</td>
-                    <td className="py-2 px-3">${tx.amount?.toFixed(2)}</td>
-                    <td className="py-2 px-3">
-                      <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${
-                        tx.payment_status === 'paid' 
-                          ? 'bg-green-500/10 text-green-500' 
-                          : tx.payment_status === 'pending'
-                          ? 'bg-amber-500/10 text-amber-500'
-                          : 'bg-red-500/10 text-red-500'
-                      }`}>
-                        {tx.payment_status === 'paid' ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
-                        {tx.payment_status === 'paid' ? 'Pago' : tx.payment_status === 'pending' ? 'Pendente' : tx.payment_status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div className="border border-border/50 rounded-xl bg-card overflow-hidden card-hover">
+          <div className="px-6 py-4 border-b border-border/50 flex items-center gap-2">
+            <Receipt className="h-5 w-5 text-primary" />
+            <h3 className="font-heading font-semibold text-sm">Histórico de Pagamentos</h3>
+          </div>
+          <div className="divide-y divide-border/30">
+            {transactions.map((tx) => (
+              <div key={tx.id} className="flex items-center justify-between px-6 py-3.5">
+                <div className="flex items-center gap-3">
+                  <div className={`w-2 h-2 rounded-full ${tx.payment_status === 'paid' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <div>
+                    <p className="text-sm font-medium">Upgrade para {tx.plan?.toUpperCase()}</p>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {tx.created_at ? new Date(tx.created_at).toLocaleDateString('pt-BR') : '—'}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-mono font-semibold">${tx.amount?.toFixed(2)}</p>
+                  <p className={`text-[10px] font-semibold uppercase ${tx.payment_status === 'paid' ? 'text-emerald-500' : 'text-amber-500'}`}>
+                    {tx.payment_status}
+                  </p>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
