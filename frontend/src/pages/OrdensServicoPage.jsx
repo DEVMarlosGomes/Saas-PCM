@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import { useFinancialAccess, BlurredMoney } from "../components/shared/FinancialGuard";
 import UpgradeDialog from "../components/UpgradeDialog";
 import { useUpgradeDialog } from "../hooks/useUpgradeDialog";
 import {
@@ -40,6 +41,12 @@ const tipoConfig = {
 export default function OrdensServicoPage() {
   const { user } = useAuth();
   const { upgradeOpen, upgradeMessage, handleApiError, closeUpgrade } = useUpgradeDialog();
+  const canSeeFinancial = (setor) => {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (user.role === 'lider' && setor && user.setor && setor.toUpperCase() === user.setor.toUpperCase()) return true;
+    return false;
+  };
   const [ordens, setOrdens] = useState([]);
   const [equipamentos, setEquipamentos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -332,14 +339,18 @@ export default function OrdensServicoPage() {
 
                   {/* Downtime Cost */}
                   <div className="hidden md:flex flex-col items-end shrink-0">
-                    {os.custo_parada != null && os.custo_parada > 0 ? (
+                    {os.tempo_total > 0 ? (
                       <div className="text-right">
-                        <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <span className="text-xs text-muted-foreground flex items-center gap-1 justify-end">
                           <TrendingDown className="h-3 w-3 text-red-500" /> Parada
                         </span>
-                        <span className="font-mono text-sm font-bold text-red-500">
-                          R$ {os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
-                        </span>
+                        {os.custo_parada != null ? (
+                          <span className="font-mono text-sm font-bold text-red-500">
+                            R$ {os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+                          </span>
+                        ) : (
+                          <BlurredMoney color="red" />
+                        )}
                       </div>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
@@ -466,19 +477,21 @@ export default function OrdensServicoPage() {
               )}
 
               {/* Downtime Cost */}
-              {detailOS.custo_parada != null && detailOS.custo_parada > 0 && (
+              {detailOS.tempo_total > 0 && (
                 <div className="p-4 rounded-xl bg-red-500/5 border border-red-500/15">
                   <p className="text-xs font-semibold text-red-500 flex items-center gap-1.5 mb-2">
                     <TrendingDown className="h-4 w-4" /> Impacto Financeiro (Máquina Parada)
                   </p>
-                  <p className="text-2xl font-heading font-bold text-red-500">
-                    R$ {detailOS.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </p>
-                  {detailOS.tempo_total && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {(detailOS.tempo_total / 60).toFixed(1)}h de máquina parada
+                  {detailOS.custo_parada != null ? (
+                    <p className="text-2xl font-heading font-bold text-red-500">
+                      R$ {detailOS.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                     </p>
+                  ) : (
+                    <BlurredMoney size="lg" color="red" />
                   )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {(detailOS.tempo_total / 60).toFixed(1)}h de máquina parada
+                  </p>
                 </div>
               )}
 
@@ -543,42 +556,49 @@ export default function OrdensServicoPage() {
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Custos</p>
-                  {canEditOS && detailOS.status !== "fechada" && (
+                  {canEditOS && user?.role === 'admin' && detailOS.status !== "fechada" && (
                     <Button size="sm" variant="outline" className="h-7 rounded-lg text-xs" onClick={() => setShowCustoModal(true)}>
                       <Plus className="h-3 w-3 mr-1" /> Adicionar
                     </Button>
                   )}
                 </div>
-                {detailCustos.length > 0 ? (
-                  <div className="space-y-2">
-                    {detailCustos.map((c) => (
-                      <div key={c.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30">
-                        <div>
-                          <Badge className="text-[10px] rounded mb-0.5">{c.tipo}</Badge>
-                          <p className="text-xs">{c.descricao}</p>
+                {canSeeFinancial(detailOS.equipamento_setor) ? (
+                  detailCustos.length > 0 ? (
+                    <div className="space-y-2">
+                      {detailCustos.map((c) => (
+                        <div key={c.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30">
+                          <div>
+                            <Badge className="text-[10px] rounded mb-0.5">{c.tipo}</Badge>
+                            <p className="text-xs">{c.descricao}</p>
+                          </div>
+                          <span className="font-mono text-sm font-semibold">
+                            R$ {(c.valor * c.quantidade).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
                         </div>
-                        <span className="font-mono text-sm font-semibold">
-                          R$ {(c.valor * c.quantidade).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      ))}
+                      <div className="flex justify-between p-3 rounded-xl bg-muted/50 font-semibold text-sm">
+                        <span>Total Manutenção</span>
+                        <span className="font-mono">
+                          R$ {detailCustos.reduce((a, c) => a + c.valor * c.quantidade, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
-                    ))}
-                    <div className="flex justify-between p-3 rounded-xl bg-muted/50 font-semibold text-sm">
-                      <span>Total Manutenção</span>
-                      <span className="font-mono">
-                        R$ {detailCustos.reduce((a, c) => a + c.valor * c.quantidade, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </span>
+                      {detailOS.custo_parada != null && detailOS.custo_parada > 0 && (
+                        <div className="flex justify-between p-3 rounded-xl bg-primary/5 border border-primary/10 font-bold text-sm">
+                          <span>Impacto Total</span>
+                          <span className="font-mono text-primary">
+                            R$ {(detailCustos.reduce((a, c) => a + c.valor * c.quantidade, 0) + detailOS.custo_parada).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                    {detailOS.custo_parada != null && detailOS.custo_parada > 0 && (
-                      <div className="flex justify-between p-3 rounded-xl bg-primary/5 border border-primary/10 font-bold text-sm">
-                        <span>Impacto Total</span>
-                        <span className="font-mono text-primary">
-                          R$ {(detailCustos.reduce((a, c) => a + c.valor * c.quantidade, 0) + detailOS.custo_parada).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center py-4">Nenhum custo registrado</p>
+                  )
                 ) : (
-                  <p className="text-xs text-muted-foreground text-center py-4">Nenhum custo registrado</p>
+                  <div className="flex flex-col items-center gap-2 py-4 text-center">
+                    <BlurredMoney size="md" />
+                    <p className="text-xs text-muted-foreground">Valores restritos ao seu perfil</p>
+                  </div>
                 )}
               </div>
             </div>

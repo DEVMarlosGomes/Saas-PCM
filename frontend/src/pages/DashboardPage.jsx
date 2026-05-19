@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getDashboardKPIs, getBacklog, seedDemo, getBillingPlan, getConfiabilidade, getDashboardTendencia } from "../lib/api";
+import { useFinancialAccess, BlurredMoney } from "../components/shared/FinancialGuard";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -261,6 +262,8 @@ export default function DashboardPage() {
     );
   }
 
+  const finAccess = useFinancialAccess(); // no setor = org-wide; lider gets 'none'
+
   const pvc = kpis?.preventiva_vs_corretiva || {};
   const pieData = [
     { name: "Corretiva",  value: pvc.corretiva  || 0, color: CHART_COLORS.danger  },
@@ -391,7 +394,9 @@ export default function DashboardPage() {
         />
         <MetricCard
           title="Custo Total"
-          value={`R$ ${(kpis?.custo_total_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
+          value={finAccess === 'full'
+            ? `R$ ${(kpis?.custo_total_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+            : <BlurredMoney size="lg" />}
           subtitle="Manutenção este mês"
           icon={DollarSign}
           color="warning"
@@ -422,7 +427,9 @@ export default function DashboardPage() {
         />
         <MetricCard
           title="Custo de Parada"
-          value={`R$ ${(kpis?.custo_parada_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
+          value={finAccess === 'full'
+            ? `R$ ${(kpis?.custo_parada_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+            : <BlurredMoney size="lg" color="red" />}
           subtitle="Máquina parada"
           icon={TrendingDown}
           color="danger"
@@ -530,15 +537,19 @@ export default function DashboardPage() {
                   <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
                   Manutenção
                 </span>
-                <span className="text-lg font-bold font-heading text-blue-500">
-                  R$ {(kpis?.custo_total_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
+                {finAccess === 'full' ? (
+                  <span className="text-lg font-bold font-heading text-blue-500">
+                    R$ {(kpis?.custo_total_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                ) : <BlurredMoney size="md" color="blue" />}
               </div>
               <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-1000"
-                  style={{ width: `${Math.min(((kpis?.custo_total_mes || 0) / Math.max((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0), 1)) * 100, 100)}%` }}
-                />
+                {finAccess === 'full' && (
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-1000"
+                    style={{ width: `${Math.min(((kpis?.custo_total_mes || 0) / Math.max((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0), 1)) * 100, 100)}%` }}
+                  />
+                )}
               </div>
             </div>
             <div>
@@ -547,23 +558,29 @@ export default function DashboardPage() {
                   <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
                   Parada de Máquina
                 </span>
-                <span className="text-lg font-bold font-heading text-red-500">
-                  R$ {(kpis?.custo_parada_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
+                {finAccess === 'full' ? (
+                  <span className="text-lg font-bold font-heading text-red-500">
+                    R$ {(kpis?.custo_parada_mes || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                ) : <BlurredMoney size="md" color="red" />}
               </div>
               <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-red-500 to-red-400 rounded-full transition-all duration-1000"
-                  style={{ width: `${Math.min(((kpis?.custo_parada_mes || 0) / Math.max((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0), 1)) * 100, 100)}%` }}
-                />
+                {finAccess === 'full' && (
+                  <div
+                    className="h-full bg-gradient-to-r from-red-500 to-red-400 rounded-full transition-all duration-1000"
+                    style={{ width: `${Math.min(((kpis?.custo_parada_mes || 0) / Math.max((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0), 1)) * 100, 100)}%` }}
+                  />
+                )}
               </div>
             </div>
             <div className="pt-4 border-t border-border/50">
               <div className="flex justify-between items-center">
                 <span className="text-sm font-semibold">Custo Total Mensal</span>
-                <span className="text-2xl font-bold font-heading">
-                  R$ {((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
+                {finAccess === 'full' ? (
+                  <span className="text-2xl font-bold font-heading">
+                    R$ {((kpis?.custo_total_mes || 0) + (kpis?.custo_parada_mes || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                ) : <BlurredMoney size="lg" />}
               </div>
             </div>
           </div>
@@ -584,7 +601,11 @@ export default function DashboardPage() {
           title="💰 Maior Custo"
           items={kpis?.top_equipamentos_custos}
           icon={DollarSign}
-          valueFormatter={(item) => `R$ ${item.total?.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}
+          valueFormatter={(item) =>
+            finAccess === 'full'
+              ? `R$ ${item.total?.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`
+              : <BlurredMoney />
+          }
           emptyMsg="Sem custos registrados"
           accentColor="warning"
         />

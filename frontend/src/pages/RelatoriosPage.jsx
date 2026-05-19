@@ -259,32 +259,34 @@ function OsTable({ rows }) {
 
 // ─── Tab: Custos ──────────────────────────────────────────────────────────────
 
-function TabCustos({ isAdmin }) {
+function TabCustos({ isAdmin, isLider, userSetor }) {
+  const canLoad = isAdmin || isLider;
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [di, setDi] = useState("");
   const [df, setDf] = useState("");
 
   const load = useCallback(async () => {
-    if (!isAdmin) { setLoading(false); return; }
+    if (!canLoad) { setLoading(false); return; }
     setLoading(true);
     try {
       const params = {};
       if (di) params.data_inicio = di;
       if (df) params.data_fim = df + "T23:59:59";
+      if (isLider && userSetor) params.setor = userSetor;
       const { data: res } = await getRelatorioCustos(params);
       setData(res);
     } catch { toast.error("Erro ao carregar custos"); }
     finally { setLoading(false); }
-  }, [di, df, isAdmin]);
+  }, [di, df, canLoad, isLider, userSetor]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (!isAdmin) {
+  if (!canLoad) {
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
         <Lock className="h-8 w-8 text-muted-foreground opacity-40" />
-        <p className="text-sm text-muted-foreground">Apenas administradores têm acesso ao relatório financeiro.</p>
+        <p className="text-sm text-muted-foreground">Apenas administradores e líderes têm acesso ao relatório financeiro.</p>
       </div>
     );
   }
@@ -633,6 +635,8 @@ export default function RelatoriosPage() {
   if (locked) return <UpgradeGate />;
 
   const isAdmin = user?.role === "admin";
+  const isLider = user?.role === "lider";
+  const canSeeCustos = isAdmin || isLider;
 
   return (
     <div className="space-y-6" data-testid="relatorios-page">
@@ -648,7 +652,7 @@ export default function RelatoriosPage() {
       {/* Tabs */}
       <div className="flex flex-wrap gap-1 bg-card border border-border/50 rounded-xl p-1.5 w-fit">
         {TABS.map(tab => {
-          if (tab.id === "custos" && !isAdmin) return null;
+          if (tab.id === "custos" && !canSeeCustos) return null;
           const Icon = tab.icon;
           return (
             <button
@@ -669,7 +673,7 @@ export default function RelatoriosPage() {
 
       {/* Tab content */}
       {activeTab === "os"          && <TabOS />}
-      {activeTab === "custos"      && <TabCustos isAdmin={isAdmin} />}
+      {activeTab === "custos"      && <TabCustos isAdmin={isAdmin} isLider={isLider} userSetor={user?.setor} />}
       {activeTab === "pareto"      && <TabPareto />}
       {activeTab === "preventivos" && <TabPreventivos />}
     </div>

@@ -574,6 +574,7 @@ class OSResponse(BaseModel):
     reincidente: bool
     organization_id: str
     custo_parada: Optional[float] = None
+    equipamento_setor: Optional[str] = None
     review_deadline: Optional[datetime] = None
     review_notes: Optional[str] = None
     auto_approved: bool = False
@@ -1229,30 +1230,42 @@ def check_plan_limit(db: Session, org: Organization, resource: str) -> tuple:
     return True, ""
 
 def build_os_response(o, db: Session, user=None) -> OSResponse:
-    """Build OSResponse with computed custo_parada and enriched names"""
-    # Compute downtime cost
+    """Build OSResponse with computed custo_parada, setor, and enriched names."""
+    from sqlalchemy import text as _sa_text
     custo_parada = None
     equipamento_nome = None
+    equipamento_setor = None
     equip = db.query(Equipamento).filter(Equipamento.id == o.equipamento_id).first()
     if equip:
         equipamento_nome = equip.nome
         if o.tempo_total and equip.valor_hora:
             custo_parada = round((o.tempo_total / 60) * equip.valor_hora, 2)
+        # setor is not mapped in ORM — fetch via raw SQL
+        row = db.execute(_sa_text("SELECT setor FROM equipamentos WHERE id = :id"),
+                         {"id": str(equip.id)}).fetchone()
+        equipamento_setor = row[0] if row else None
 
-    # Get reviewer name
     revisor_nome = None
     if o.revisor_id:
         revisor = db.query(User).filter(User.id == o.revisor_id).first()
         if revisor:
             revisor_nome = revisor.nome
 
-    # Apply financial visibility: only ADMIN sees custo_parada
-    if user is not None and user.role not in (UserRole.ADMIN,):
-        custo_parada = None
+    # Financial visibility:
+    # ADMIN       → full custo_parada
+    # LIDER       → custo_parada only for own setor
+    # TECNICO/OPERADOR → custo_parada = None
+    if user is not None and user.role != UserRole.ADMIN:
+        if user.role == UserRole.LIDER:
+            if equipamento_setor and user.setor and equipamento_setor.upper() != user.setor.upper():
+                custo_parada = None
+        else:
+            custo_parada = None
 
     return OSResponse(
         id=str(o.id), numero=o.numero, equipamento_id=str(o.equipamento_id),
         equipamento_nome=equipamento_nome,
+        equipamento_setor=equipamento_setor,
         grupo_id=str(o.grupo_id) if o.grupo_id else None,
         subgrupo_id=str(o.subgrupo_id) if o.subgrupo_id else None,
         tipo=o.tipo.value, prioridade=o.prioridade.value, status=o.status.value,
@@ -2508,6 +2521,8 @@ async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session
             hours = round((total_dt or 0) / 60, 1)
             top_equipamentos_downtime.append({"nome": equip.nome, "codigo": equip.codigo, "total_horas": hours})
     
+    # Financial fields: only ADMIN receives real values
+    _is_admin = user.role == UserRole.ADMIN
     return DashboardKPIs(
         total_os_mes=total_os_mes,
         os_abertas=os_abertas,
@@ -2515,12 +2530,12 @@ async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session
         mttr=round(mttr, 2),
         mtbf=round(mtbf, 2),
         disponibilidade=round(disponibilidade, 2),
-        custo_total_mes=round(custo_total_mes, 2),
-        custo_parada_mes=round(custo_parada, 2),
+        custo_total_mes=round(custo_total_mes, 2) if _is_admin else 0.0,
+        custo_parada_mes=round(custo_parada, 2) if _is_admin else 0.0,
         avg_tempo_resposta=round(avg_tempo_resposta, 1),
         preventiva_vs_corretiva={"preventiva": preventivas, "corretiva": corretivas, "preditiva": preditivas},
         top_equipamentos_falhas=top_equipamentos_falhas,
-        top_equipamentos_custos=top_equipamentos_custos,
+        top_equipamentos_custos=top_equipamentos_custos if _is_admin else [],
         top_equipamentos_downtime=top_equipamentos_downtime
     )
 
@@ -3369,13 +3384,19 @@ async def relatorio_os(
 async def relatorio_custos(
     data_inicio: Optional[str] = None,
     data_fim: Optional[str] = None,
+    setor: Optional[str] = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    from sqlalchemy import text as sa_text
     org = db.query(Organization).filter(Organization.id == user.organization_id).first()
     _require_feature(org, "relatorios")
-    if user.role not in (UserRole.ADMIN,):
-        raise HTTPException(status_code=403, detail="Apenas administradores podem acessar relatório financeiro.")
+    # Admin: full access; Lider: only their setor; others: forbidden
+    if user.role not in (UserRole.ADMIN, UserRole.LIDER):
+        raise HTTPException(status_code=403, detail="Apenas administradores e líderes podem acessar o relatório financeiro.")
+    # Lider is always restricted to own setor regardless of ?setor param
+    if user.role == UserRole.LIDER:
+        setor = user.setor
 
     query = db.query(CustoOS).filter(CustoOS.organization_id == user.organization_id)
     if data_inicio:
@@ -3393,8 +3414,26 @@ async def relatorio_custos(
 
     custos = query.all()
 
-    eq_map = {str(e.id): e.nome for e in db.query(Equipamento).filter(Equipamento.organization_id == user.organization_id).all()}
+    # Build equipment map with setor (setor is not in ORM — fetch via raw SQL)
+    equips = db.query(Equipamento).filter(Equipamento.organization_id == user.organization_id).all()
+    equip_setor_map: dict = {}
+    if setor:
+        setor_rows = db.execute(sa_text(
+            "SELECT id, setor FROM equipamentos WHERE organization_id = :org"
+        ), {"org": str(user.organization_id)}).fetchall()
+        equip_setor_map = {str(r[0]): (r[1] or "").upper() for r in setor_rows}
+    eq_map = {str(e.id): e.nome for e in equips}
     os_map = {str(o.id): o for o in db.query(OrdemServico).filter(OrdemServico.organization_id == user.organization_id).all()}
+
+    # Filter custos by setor if applicable
+    if setor:
+        setor_upper = setor.upper()
+        filtered = []
+        for c in custos:
+            os_obj = os_map.get(str(c.ordem_servico_id))
+            if os_obj and equip_setor_map.get(str(os_obj.equipamento_id), "") == setor_upper:
+                filtered.append(c)
+        custos = filtered
 
     total_geral = sum(c.valor * c.quantidade for c in custos)
 

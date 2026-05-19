@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import { useFinancialAccess, BlurredMoney } from "../components/shared/FinancialGuard";
 import UpgradeDialog from "../components/UpgradeDialog";
 import { useUpgradeDialog } from "../hooks/useUpgradeDialog";
 import {
@@ -37,6 +38,7 @@ const criticidadeConfig = {
 export default function EquipamentosPage() {
   const { user } = useAuth();
   const { upgradeOpen, upgradeMessage, handleApiError, closeUpgrade } = useUpgradeDialog();
+  const finAccess = useFinancialAccess(); // org-wide; only admin gets 'full'
   const [equipamentos, setEquipamentos] = useState([]);
   const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -120,8 +122,13 @@ export default function EquipamentosPage() {
             <Settings className="h-6 w-6 text-primary" />
             Equipamentos
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {equipamentos.length} ativos • R$ {totalRevenuaRisk.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}/h em risco
+          <p className="text-muted-foreground text-sm mt-1 flex items-center gap-1.5">
+            {equipamentos.length} ativos •{" "}
+            {finAccess === 'full' ? (
+              <span>R$ {totalRevenuaRisk.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}/h em risco</span>
+            ) : (
+              <><BlurredMoney /><span>/h em risco</span></>
+            )}
           </p>
         </div>
         {canEdit && (
@@ -317,7 +324,9 @@ export default function EquipamentosPage() {
                     </span>
                     <span className={`text-lg font-bold font-heading ${eq.valor_hora > 0 ? 'text-red-500' : 'text-muted-foreground'}`}>
                       {eq.valor_hora > 0 ? (
-                        `R$ ${eq.valor_hora.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                        finAccess === 'full'
+                          ? `R$ ${eq.valor_hora.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                          : <BlurredMoney size="md" color="red" />
                       ) : (
                         "Não definido"
                       )}
@@ -377,11 +386,13 @@ export default function EquipamentosPage() {
                     <p className="text-[11px] text-muted-foreground uppercase font-semibold tracking-wider">Preventivas</p>
                     <p className="text-2xl font-heading font-bold text-emerald-500 mt-1">{historyDialog.data.estatisticas.preventivas}</p>
                   </div>
-                  {/* Financial Impact — Prominently displayed */}
+                  {/* Financial Impact — admin only */}
                   <div className="p-3 border border-border/50 rounded-xl text-center">
                     <p className="text-[11px] text-muted-foreground uppercase font-semibold tracking-wider">Custo Manutenção</p>
                     <p className="text-lg font-heading font-bold mt-1">
-                      R$ {historyDialog.data.estatisticas.custo_total?.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+                      {finAccess === 'full'
+                        ? `R$ ${historyDialog.data.estatisticas.custo_total?.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`
+                        : <BlurredMoney size="md" />}
                     </p>
                   </div>
                   <div className="p-3 border border-red-500/15 bg-red-500/5 rounded-xl text-center">
@@ -389,7 +400,9 @@ export default function EquipamentosPage() {
                       <TrendingDown className="h-3 w-3" /> Custo Parada
                     </p>
                     <p className="text-lg font-heading font-bold text-red-500 mt-1">
-                      R$ {historyDialog.data.estatisticas.custo_parada_total?.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+                      {finAccess === 'full'
+                        ? `R$ ${historyDialog.data.estatisticas.custo_parada_total?.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`
+                        : <BlurredMoney size="md" color="red" />}
                     </p>
                   </div>
                   <div className="p-3 border border-border/50 rounded-xl text-center">
@@ -419,9 +432,11 @@ export default function EquipamentosPage() {
                                 🔁 Reincidente
                               </Badge>
                             )}
-                            {os.custo_parada != null && os.custo_parada > 0 && (
-                              <span className="text-[10px] font-mono font-semibold text-red-500 bg-red-500/5 px-1.5 py-0.5 rounded">
-                                R$ {os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} parada
+                            {os.tempo_total > 0 && (
+                              <span className="text-[10px] font-mono font-semibold text-red-500 bg-red-500/5 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                {os.custo_parada != null && finAccess === 'full'
+                                  ? `R$ ${os.custo_parada.toLocaleString('pt-BR', { minimumFractionDigits: 0 })} parada`
+                                  : <BlurredMoney color="red" />}
                               </span>
                             )}
                           </div>
