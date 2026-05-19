@@ -48,8 +48,13 @@ export default function UsuariosPage() {
   const [newNome, setNewNome] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState("operador");
+  const [newSetor, setNewSetor] = useState("");
+  const [newIsLider, setNewIsLider] = useState(false);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Inline edit state
+  const [editSetor, setEditSetor] = useState("");
+  const [editIsLider, setEditIsLider] = useState(false);
 
   useEffect(() => {
     loadUsers();
@@ -74,7 +79,10 @@ export default function UsuariosPage() {
     }
     setCreating(true);
     try {
-      await createUser({ email: newEmail, nome: newNome, password: newPassword, role: newRole });
+      await createUser({
+        email: newEmail, nome: newNome, password: newPassword, role: newRole,
+        setor: newSetor || null, is_lider: newIsLider,
+      });
       toast.success("Usuário criado com sucesso!");
       setShowCreateModal(false);
       resetCreateForm();
@@ -116,6 +124,8 @@ export default function UsuariosPage() {
     setNewNome("");
     setNewPassword("");
     setNewRole("operador");
+    setNewSetor("");
+    setNewIsLider(false);
   };
 
   const filteredUsers = users.filter(u =>
@@ -192,10 +202,10 @@ export default function UsuariosPage() {
                     <div className="absolute right-0 top-9 bg-card border border-border rounded-lg shadow-xl py-1 z-10 min-w-[140px] animate-fade-in">
                       <button
                         className="flex items-center gap-2 w-full px-3 py-2 text-sm hover:bg-muted transition-colors"
-                        onClick={() => { setEditingUser(u.id); setActionMenuId(null); }}
+                        onClick={() => { setEditingUser(u.id); setEditSetor(u.setor || ""); setEditIsLider(u.is_lider || false); setActionMenuId(null); }}
                       >
                         <Edit2 className="h-3.5 w-3.5" />
-                        Editar cargo
+                        Editar perfil
                       </button>
                       <button
                         className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-500 hover:bg-red-500/10 transition-colors"
@@ -225,27 +235,57 @@ export default function UsuariosPage() {
 
               {/* Role */}
               {isEditing ? (
-                <div className="space-y-2 mb-3">
-                  <Label className="text-xs">Alterar cargo:</Label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {roles.map((r) => (
-                      <button
-                        key={r}
-                        className={`text-xs px-2 py-1.5 rounded-md border transition-colors ${
-                          r === u.role
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'border-border bg-muted/50 hover:bg-muted text-foreground'
-                        }`}
-                        onClick={() => handleUpdate(u.id, { role: r })}
-                        disabled={saving}
-                      >
-                        {roleConfig[r]?.label}
-                      </button>
-                    ))}
+                <div className="space-y-3 mb-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Cargo:</Label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {roles.map((r) => (
+                        <button
+                          key={r}
+                          className={`text-xs px-2 py-1.5 rounded-md border transition-colors ${
+                            r === u.role
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'border-border bg-muted/50 hover:bg-muted text-foreground'
+                          }`}
+                          onClick={() => handleUpdate(u.id, { role: r })}
+                          disabled={saving}
+                        >
+                          {roleConfig[r]?.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => setEditingUser(null)} className="w-full mt-1">
-                    Cancelar
-                  </Button>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Setor:</Label>
+                    <Input
+                      value={editSetor}
+                      onChange={(e) => setEditSetor(e.target.value.toUpperCase())}
+                      placeholder="ex: MECANICA, ELETRICA"
+                      className="h-8 text-xs rounded-md"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={editIsLider}
+                      onChange={(e) => setEditIsLider(e.target.checked)}
+                      className="rounded"
+                    />
+                    Marcar como líder do setor
+                  </label>
+                  <div className="flex gap-1.5 pt-1">
+                    <Button
+                      size="sm"
+                      className="flex-1 h-7 text-xs"
+                      onClick={() => handleUpdate(u.id, { setor: editSetor || null, is_lider: editIsLider })}
+                      disabled={saving}
+                    >
+                      {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Salvar'}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setEditingUser(null)} className="flex-1 h-7 text-xs">
+                      Cancelar
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-center justify-between">
@@ -257,6 +297,20 @@ export default function UsuariosPage() {
                     {u.ativo ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
                     {u.ativo ? 'Ativo' : 'Inativo'}
                   </span>
+                </div>
+              )}
+
+              {/* Setor badge */}
+              {u.setor && (
+                <div className="mt-2 flex items-center gap-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                    {u.setor}
+                  </span>
+                  {u.is_lider && (
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                      Líder
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -320,6 +374,24 @@ export default function UsuariosPage() {
                   ))}
                 </div>
               </div>
+              <div className="space-y-2">
+                <Label>Setor <span className="text-muted-foreground font-normal">(opcional)</span></Label>
+                <Input
+                  value={newSetor}
+                  onChange={(e) => setNewSetor(e.target.value.toUpperCase())}
+                  className="h-10 rounded-lg"
+                  placeholder="ex: MECANICA, ELETRICA, CIVIL"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={newIsLider}
+                  onChange={(e) => setNewIsLider(e.target.checked)}
+                  className="rounded"
+                />
+                Marcar como líder do setor
+              </label>
               <div className="flex gap-2 pt-2">
                 <Button type="button" variant="outline" className="flex-1 rounded-lg" onClick={() => setShowCreateModal(false)}>
                   Cancelar

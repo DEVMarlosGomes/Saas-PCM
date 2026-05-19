@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getDashboardKPIs, getBacklog, seedDemo, getBillingPlan } from "../lib/api";
+import { getDashboardKPIs, getBacklog, seedDemo, getBillingPlan, getConfiabilidade, getDashboardTendencia } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -24,6 +24,9 @@ import {
   Target,
   ShieldCheck,
   Loader2,
+  ShieldAlert,
+  Radio,
+  Flame,
 } from "lucide-react";
 import {
   BarChart,
@@ -37,6 +40,10 @@ import {
   Pie,
   Cell,
   Legend,
+  LineChart,
+  Line,
+  Area,
+  AreaChart,
 } from "recharts";
 
 const CHART_COLORS = {
@@ -166,6 +173,8 @@ export default function DashboardPage() {
   const [kpis, setKpis] = useState(null);
   const [backlog, setBacklog] = useState(null);
   const [billing, setBilling] = useState(null);
+  const [confiabilidade, setConfiabilidade] = useState(null);
+  const [tendencia, setTendencia] = useState(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   const navigate = useNavigate();
@@ -173,14 +182,18 @@ export default function DashboardPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [kpisRes, backlogRes, billingRes] = await Promise.all([
+      const [kpisRes, backlogRes, billingRes, confRes, tendRes] = await Promise.all([
         getDashboardKPIs(),
         getBacklog(),
         getBillingPlan().catch(() => ({ data: null })),
+        getConfiabilidade(24).catch(() => ({ data: null })),
+        getDashboardTendencia(30).catch(() => ({ data: null })),
       ]);
       setKpis(kpisRes.data || null);
       setBacklog(backlogRes.data || null);
       if (billingRes && billingRes.data) setBilling(billingRes.data);
+      if (confRes && confRes.data) setConfiabilidade(confRes.data);
+      if (tendRes && tendRes.data) setTendencia(tendRes.data);
     } catch (error) {
       console.error("Error loading dashboard:", error);
       toast.error("Erro ao carregar dashboard");
@@ -506,6 +519,228 @@ export default function DashboardPage() {
           accentColor="primary"
         />
       </div>
+
+      {/* Tendência OS — últimos 30 dias */}
+      {tendencia && tendencia.serie?.length > 0 && (
+        <div className="border border-border/50 rounded-xl bg-card p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-semibold text-sm">Tendência de OS — Últimos 30 dias</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">Total, corretivas e fechadas por dia</p>
+            </div>
+            <button
+              onClick={() => navigate("/relatorios")}
+              className="text-xs text-primary flex items-center gap-1 hover:underline"
+            >
+              Ver relatório <ChevronRight className="h-3 w-3" />
+            </button>
+          </div>
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={tendencia.serie} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="gradTotal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor="#1A6FE8" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="#1A6FE8" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gradCorr" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%"  stopColor="#EF4444" stopOpacity={0.18} />
+                  <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="data" tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false}
+                interval={Math.floor(tendencia.serie.length / 7)} />
+              <YAxis tick={{ fontSize: 10, fill: "#64748B" }} tickLine={false} axisLine={false} allowDecimals={false} width={24} />
+              <Tooltip
+                contentStyle={{ background: "#0D1626", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, fontSize: 12 }}
+                formatter={(v, name) => [v, name === "total" ? "Total" : name === "corretivas" ? "Corretivas" : "Fechadas"]}
+              />
+              <Area type="monotone" dataKey="total" name="total" stroke="#1A6FE8" strokeWidth={2} fill="url(#gradTotal)" dot={false} />
+              <Area type="monotone" dataKey="corretivas" name="corretivas" stroke="#EF4444" strokeWidth={1.5} fill="url(#gradCorr)" dot={false} strokeDasharray="4 2" />
+              <Line type="monotone" dataKey="fechadas" name="fechadas" stroke="#10B981" strokeWidth={1.5} dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+          <div className="flex gap-5 justify-center mt-3">
+            {[["#1A6FE8","Total"],["#EF4444","Corretivas"],["#10B981","Fechadas"]].map(([c,l]) => (
+              <span key={l} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="w-4 h-0.5 rounded" style={{ background: c }} />{l}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Confiabilidade & Risco */}
+      {confiabilidade && confiabilidade.equipamentos?.length > 0 && (
+        <div className="space-y-4" data-testid="reliability-section">
+          {/* Reliability Header */}
+          <div className="flex items-center justify-between">
+            <h2 className="font-heading font-semibold text-lg flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-primary" />
+              Confiabilidade & Risco
+              <span className="text-xs font-normal text-muted-foreground ml-1">
+                (horizonte: {confiabilidade.horizonte_horas}h)
+              </span>
+            </h2>
+          </div>
+
+          {/* Reliability KPI Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger-children">
+            <MetricCard
+              title="Confiabilidade Média"
+              value={`${confiabilidade.resumo?.confiabilidade_media?.toFixed(1) || 100}%`}
+              subtitle={`R(t) em ${confiabilidade.horizonte_horas}h`}
+              icon={ShieldAlert}
+              color={confiabilidade.resumo?.confiabilidade_media >= 80 ? "success" : confiabilidade.resumo?.confiabilidade_media >= 50 ? "warning" : "danger"}
+            />
+            <MetricCard
+              title="λ Médio"
+              value={confiabilidade.resumo?.lambda_medio?.toFixed(4) || "0"}
+              subtitle="falhas/hora"
+              icon={Radio}
+              color={confiabilidade.resumo?.lambda_medio >= 0.05 ? "danger" : confiabilidade.resumo?.lambda_medio >= 0.01 ? "warning" : "success"}
+            />
+            <MetricCard
+              title="Alertas Críticos"
+              value={confiabilidade.resumo?.alertas_criticos || 0}
+              subtitle={`${confiabilidade.resumo?.alertas_alto || 0} altos, ${confiabilidade.resumo?.alertas_atencao || 0} atenção`}
+              icon={Flame}
+              color={confiabilidade.resumo?.alertas_criticos > 0 ? "danger" : "success"}
+            />
+            <MetricCard
+              title="Equip. Instáveis"
+              value={confiabilidade.resumo?.["equipamentos_instáveis"] || 0}
+              subtitle="λ ≥ 0.05 falhas/h"
+              icon={AlertTriangle}
+              color={confiabilidade.resumo?.["equipamentos_instáveis"] > 0 ? "danger" : "success"}
+            />
+          </div>
+
+          {/* Reliability Alerts */}
+          {confiabilidade.alertas?.length > 0 && (
+            <div className="space-y-2">
+              {confiabilidade.alertas.slice(0, 5).map((alerta, i) => (
+                <div
+                  key={i}
+                  className={`flex items-start gap-3 px-4 py-3 rounded-xl border text-sm animate-slide-in-bottom ${
+                    alerta.tipo === "critico"
+                      ? "bg-red-500/8 border-red-500/20 text-red-700 dark:text-red-400"
+                      : alerta.tipo === "alto"
+                        ? "bg-amber-500/8 border-amber-500/20 text-amber-700 dark:text-amber-400"
+                        : "bg-blue-500/8 border-blue-500/20 text-blue-700 dark:text-blue-400"
+                  }`}
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  <AlertTriangle className={`h-4 w-4 mt-0.5 shrink-0 ${
+                    alerta.tipo === "critico" ? "text-red-500" : alerta.tipo === "alto" ? "text-amber-500" : "text-blue-500"
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium">{alerta.mensagem}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="font-mono font-bold text-xs">R(t) {alerta.confiabilidade}%</p>
+                    <p className="font-mono text-[10px] opacity-70">Risco {alerta.risco}%</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Equipment Risk Table */}
+          <div className="border border-border/50 rounded-xl bg-card overflow-hidden card-hover">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border/50">
+              <h3 className="font-heading font-semibold text-sm flex items-center gap-2">
+                <Target className="h-4 w-4 text-primary" />
+                Matriz de Risco por Equipamento
+              </h3>
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Probabilidade × Impacto
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full table-dense">
+                <thead>
+                  <tr className="bg-muted/30">
+                    <th className="text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-4 py-3">Equipamento</th>
+                    <th className="text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-3">Crit.</th>
+                    <th className="text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-3">Falhas</th>
+                    <th className="text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-3">λ (falhas/h)</th>
+                    <th className="text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-3">MTBF</th>
+                    <th className="text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-3">R(t)</th>
+                    <th className="text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-3">Risco</th>
+                    <th className="text-center text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 py-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/30">
+                  {confiabilidade.equipamentos.slice(0, 15).map((eq) => (
+                    <tr key={eq.equipamento_id} className="hover:bg-muted/20 transition-colors">
+                      <td className="px-4 py-3">
+                        <p className="text-sm font-medium">{eq.nome}</p>
+                        <p className="text-[11px] text-muted-foreground">{eq.codigo}</p>
+                      </td>
+                      <td className="text-center px-3 py-3">
+                        <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ${
+                          eq.criticidade >= 4 ? 'bg-red-500/15 text-red-500' :
+                          eq.criticidade >= 3 ? 'bg-amber-500/15 text-amber-500' :
+                          'bg-muted text-muted-foreground'
+                        }`}>
+                          {eq.criticidade}
+                        </span>
+                      </td>
+                      <td className="text-center px-3 py-3 font-mono text-sm font-semibold">{eq.falhas}</td>
+                      <td className="text-center px-3 py-3">
+                        <span className={`font-mono text-sm font-semibold ${
+                          eq.lambda_status === 'instavel' ? 'text-red-500' :
+                          eq.lambda_status === 'atencao' ? 'text-amber-500' :
+                          'text-emerald-500'
+                        }`}>
+                          {eq.lambda.toFixed(4)}
+                        </span>
+                      </td>
+                      <td className="text-center px-3 py-3 font-mono text-sm">{eq.mtbf_horas.toFixed(0)}h</td>
+                      <td className="text-center px-3 py-3">
+                        <span className={`font-mono text-sm font-bold ${
+                          eq.confiabilidade_percent >= 80 ? 'text-emerald-500' :
+                          eq.confiabilidade_percent >= 50 ? 'text-amber-500' :
+                          'text-red-500'
+                        }`}>
+                          {eq.confiabilidade_percent}%
+                        </span>
+                      </td>
+                      <td className="text-center px-3 py-3">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${
+                                eq.risco_percent >= 60 ? 'bg-red-500' :
+                                eq.risco_percent >= 30 ? 'bg-amber-500' :
+                                eq.risco_percent >= 10 ? 'bg-blue-500' :
+                                'bg-emerald-500'
+                              }`}
+                              style={{ width: `${Math.min(eq.risco_percent, 100)}%` }}
+                            />
+                          </div>
+                          <span className="font-mono text-[11px] font-semibold w-10 text-right">{eq.risco_percent}%</span>
+                        </div>
+                      </td>
+                      <td className="text-center px-3 py-3">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          eq.nivel_risco === 'critico' ? 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20' :
+                          eq.nivel_risco === 'alto' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20' :
+                          eq.nivel_risco === 'atencao' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20' :
+                          'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                        }`}>
+                          {eq.nivel_risco}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

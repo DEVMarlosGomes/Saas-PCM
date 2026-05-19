@@ -14,9 +14,13 @@ import bcrypt
 import jwt
 import secrets
 from urllib.parse import quote_plus
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # PostgreSQL with SQLAlchemy
 from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Boolean, ForeignKey, Text, Enum as SQLEnum, Index
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.dialects.postgresql import UUID
@@ -41,6 +45,7 @@ if not DATABASE_URL:
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+database_initialized = False
 
 # JWT Configuration
 JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_hex(32))
@@ -51,6 +56,13 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# SMTP configuration (fail-silent email notifications)
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", "noreply@aurix.com.br")
 
 # ========== ENUMS ==========
 class UserRole(str, enum.Enum):
@@ -83,15 +95,68 @@ class TipoCusto(str, enum.Enum):
     MAO_OBRA = "mao_obra"
 
 class PlanoSaaS(str, enum.Enum):
-    FREE = "free"
-    PRO = "pro"
+    DEMO = "demo"
+    ESSENCIAL = "essencial"
+    PROFISSIONAL = "profissional"
+    AVANCADO = "avancado"
     ENTERPRISE = "enterprise"
 
-# Plan limits configuration
+# Plan limits & feature flags — 5 planos AURIX
 PLAN_LIMITS = {
-    PlanoSaaS.FREE: {"max_equipamentos": 10, "max_users": 5, "max_os_mes": 50, "price": 0.00, "label": "Free"},
-    PlanoSaaS.PRO: {"max_equipamentos": 100, "max_users": 50, "max_os_mes": 500, "price": 99.00, "label": "Pro"},
-    PlanoSaaS.ENTERPRISE: {"max_equipamentos": 9999, "max_users": 999, "max_os_mes": 9999, "price": 299.00, "label": "Enterprise"},
+    PlanoSaaS.DEMO: {
+        "label": "Demo", "price": 0.0, "preco_mensal": 0.0,
+        "max_equipamentos": 5, "max_users": 3, "max_os_mes": 10,
+        "stripe_price_id": None, "cta_tipo": "trial", "destaque": False,
+        "relatorios": False, "grupos_subgrupos": False, "aprovacao_setor": False,
+        "modulo_preditivo": False, "planos_preventivos": False, "api_iot": False,
+        "notificacoes_email": False, "exportacao_pdf": False, "sso": False,
+        "dashboard_avancado": False, "kanban": False, "suporte": "none",
+    },
+    PlanoSaaS.ESSENCIAL: {
+        "label": "Essencial", "price": 250.0, "preco_mensal": 250.0,
+        "max_equipamentos": 20, "max_users": 10, "max_os_mes": 100,
+        "stripe_price_id": "price_essencial_mensal", "cta_tipo": "stripe_checkout", "destaque": False,
+        "relatorios": True, "grupos_subgrupos": True, "aprovacao_setor": True,
+        "modulo_preditivo": False, "planos_preventivos": False, "api_iot": False,
+        "notificacoes_email": True, "exportacao_pdf": False, "sso": False,
+        "dashboard_avancado": False, "kanban": False, "suporte": "email",
+    },
+    PlanoSaaS.PROFISSIONAL: {
+        "label": "Profissional", "price": 490.0, "preco_mensal": 490.0,
+        "max_equipamentos": 35, "max_users": 45, "max_os_mes": -1,
+        "stripe_price_id": "price_profissional_mensal", "cta_tipo": "stripe_checkout", "destaque": True,
+        "relatorios": True, "grupos_subgrupos": True, "aprovacao_setor": True,
+        "modulo_preditivo": True, "max_equipamentos_preditivo": 10,
+        "planos_preventivos": True, "api_iot": True,
+        "notificacoes_email": True, "exportacao_pdf": True, "sso": False,
+        "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
+        "relatorios_custo": True, "suporte": "prioritario",
+    },
+    PlanoSaaS.AVANCADO: {
+        "label": "Avançado", "price": 790.0, "preco_mensal": 790.0,
+        "max_equipamentos": 50, "max_users": 100, "max_os_mes": -1,
+        "stripe_price_id": "price_avancado_mensal", "cta_tipo": "stripe_checkout", "destaque": False,
+        "relatorios": True, "relatorios_personalizados": True, "grupos_subgrupos": True,
+        "aprovacao_setor": True, "modulo_preditivo": True, "max_equipamentos_preditivo": 30,
+        "planos_preventivos": True, "api_iot": True,
+        "notificacoes_email": True, "notificacoes_whatsapp": True,
+        "exportacao_pdf": True, "integracoes_basicas": True, "sso": False,
+        "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
+        "relatorios_custo": True, "analise_pareto": True, "suporte": "prioritario",
+    },
+    PlanoSaaS.ENTERPRISE: {
+        "label": "Enterprise", "price": 1290.0, "preco_mensal": 1290.0,
+        "max_equipamentos": -1, "max_users": -1, "max_os_mes": -1,
+        "stripe_price_id": None, "cta_tipo": "contato", "destaque": False,
+        "relatorios": True, "relatorios_personalizados": True, "grupos_subgrupos": True,
+        "aprovacao_setor": True, "modulo_preditivo": True, "max_equipamentos_preditivo": -1,
+        "planos_preventivos": True, "api_iot": True,
+        "notificacoes_email": True, "notificacoes_whatsapp": True,
+        "exportacao_pdf": True, "integracoes_avancadas": True, "sso": True,
+        "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
+        "relatorios_custo": True, "analise_pareto": True,
+        "onboarding_personalizado": True, "sla_customizado": True, "suporte": "dedicado",
+    },
 }
 
 # ========== MODELS ==========
@@ -101,26 +166,31 @@ class Organization(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nome = Column(String(255), nullable=False)
     cnpj = Column(String(20), unique=True, nullable=True)
-    plano = Column(SQLEnum(PlanoSaaS), default=PlanoSaaS.FREE)
-    limite_equipamentos = Column(Integer, default=10)
-    limite_usuarios = Column(Integer, default=5)
-    limite_os_mes = Column(Integer, default=50)
+    plano = Column(SQLEnum(PlanoSaaS), default=PlanoSaaS.DEMO)
+    limite_equipamentos = Column(Integer, default=5)
+    limite_usuarios = Column(Integer, default=3)
+    limite_os_mes = Column(Integer, default=10)
     ativo = Column(Boolean, default=True)
     stripe_customer_id = Column(String(255), nullable=True)
     stripe_subscription_id = Column(String(255), nullable=True)
     subscription_status = Column(String(50), default="active")
+    api_key = Column(String(64), nullable=True, unique=True)
+    plano_trial_expira_em = Column(DateTime(timezone=True), nullable=True)
+    contato_enterprise_solicitado = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 class User(Base):
     __tablename__ = "users"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
     nome = Column(String(255), nullable=False)
     role = Column(SQLEnum(UserRole), default=UserRole.OPERADOR)
+    setor = Column(String(100), nullable=True)    # ex: "MECANICA", "TI", "ELETRICA"
+    is_lider = Column(Boolean, default=False)     # True = líder do setor, recebe aprovações
     ativo = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -286,8 +356,71 @@ class PaymentTransaction(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+class Notificacao(Base):
+    __tablename__ = "notificacoes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    destinatario_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    tipo = Column(String(50), nullable=False)   # "aprovacao_pendente"|"os_aprovada"|"os_rejeitada"|"sla_expirando"|"os_concluida"
+    titulo = Column(String(255), nullable=False)
+    mensagem = Column(Text, nullable=False)
+    os_id = Column(UUID(as_uuid=True), nullable=True)
+    lida = Column(Boolean, default=False)
+    criada_em = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    lida_em = Column(DateTime(timezone=True), nullable=True)
+
+
+class ConfiguracaoMonitoramento(Base):
+    __tablename__ = "configuracoes_monitoramento"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    equipamento_id = Column(UUID(as_uuid=True), ForeignKey("equipamentos.id"), nullable=False)
+    parametro_nome = Column(String(100), nullable=False)
+    unidade = Column(String(20), nullable=True)
+    threshold_atencao = Column(Float, nullable=False)
+    threshold_critico = Column(Float, nullable=False)
+    tendencia_janela_dias = Column(Integer, default=7)
+    ativo = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class LeituraSensor(Base):
+    __tablename__ = "leituras_sensor"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    equipamento_id = Column(UUID(as_uuid=True), ForeignKey("equipamentos.id"), nullable=False)
+    parametro_nome = Column(String(100), nullable=False)
+    valor = Column(Float, nullable=False)
+    unidade = Column(String(20), nullable=True)
+    fonte = Column(String(50), default="manual")
+    registrado_por = Column(UUID(as_uuid=True), nullable=True)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    processado = Column(Boolean, default=False)
+
+
+class AlertaPreditivo(Base):
+    __tablename__ = "alertas_preditivos"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    equipamento_id = Column(UUID(as_uuid=True), ForeignKey("equipamentos.id"), nullable=False)
+    parametro_nome = Column(String(100), nullable=False)
+    severidade = Column(String(20), nullable=False)   # "ATENCAO"|"CRITICO"
+    valor_atual = Column(Float, nullable=False)
+    threshold_violado = Column(Float, nullable=False)
+    tendencia = Column(String(20), default="ESTAVEL")  # "ESTAVEL"|"CRESCENTE"|"CRITICA"
+    rul_estimado_dias = Column(Integer, nullable=True)
+    descricao = Column(Text, nullable=False)
+    status = Column(String(20), default="ABERTO")      # "ABERTO"|"OS_GERADA"|"IGNORADO"|"RESOLVIDO"
+    os_gerada_id = Column(UUID(as_uuid=True), nullable=True)
+    ignorado_por = Column(UUID(as_uuid=True), nullable=True)
+    motivo_ignorado = Column(Text, nullable=True)
+    criado_em = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    resolvido_em = Column(DateTime(timezone=True), nullable=True)
+
 
 # ========== PYDANTIC SCHEMAS ==========
 class OrganizationCreate(BaseModel):
@@ -322,10 +455,12 @@ class UserResponse(BaseModel):
     email: str
     nome: str
     role: str
+    setor: Optional[str] = None
+    is_lider: bool = False
     organization_id: str
     ativo: bool
     created_at: datetime
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 class UserCreate(BaseModel):
@@ -333,6 +468,8 @@ class UserCreate(BaseModel):
     password: str
     nome: str
     role: UserRole = UserRole.OPERADOR
+    setor: Optional[str] = None
+    is_lider: bool = False
 
 class GrupoCreate(BaseModel):
     nome: str
@@ -509,7 +646,50 @@ class CheckoutRequest(BaseModel):
     origin_url: str
 
 # ========== HELPER FUNCTIONS ==========
+def ensure_database_schema():
+    global database_initialized
+
+    if database_initialized:
+        return
+
+    try:
+        Base.metadata.create_all(bind=engine)
+        # Schema migrations for new columns
+        _migrations = [
+            "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS api_key VARCHAR(64) UNIQUE",
+            "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plano_trial_expira_em TIMESTAMPTZ",
+            "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS contato_enterprise_solicitado BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS setor VARCHAR(100)",
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS monitoramento_ativo BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS status_saude VARCHAR(20) DEFAULT 'NORMAL'",
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS rul_estimado_dias INTEGER",
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS mttr_horas FLOAT",
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS mtbf_horas FLOAT",
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS disponibilidade_percent FLOAT",
+        ]
+        try:
+            from sqlalchemy import text as sa_text
+            with engine.connect() as conn:
+                for sql in _migrations:
+                    try:
+                        conn.execute(sa_text(sql))
+                    except Exception:
+                        pass
+                conn.commit()
+        except Exception as mig_exc:
+            logger.warning("Schema migrations skipped: %s", mig_exc)
+        database_initialized = True
+        logger.info("Database tables created/verified")
+    except SQLAlchemyError as exc:
+        logger.exception("Database unavailable during schema initialization")
+        raise HTTPException(
+            status_code=503,
+            detail="Banco de dados indisponivel. Verifique DATABASE_URL/DB_HOST/DB_PORT e a conectividade com o banco."
+        ) from exc
+
+
 def get_db():
+    ensure_database_schema()
     db = SessionLocal()
     try:
         yield db
@@ -587,6 +767,368 @@ async def get_current_user(request: Request, db: Session = Depends(get_db)) -> U
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
+def require_role(*roles: UserRole):
+    """FastAPI dependency factory: exige que o usuário tenha um dos perfis informados."""
+    async def dependency(current_user: User = Depends(get_current_user)):
+        if current_user.role not in roles:
+            raise HTTPException(status_code=403, detail="Você não tem permissão para esta ação.")
+        return current_user
+    return dependency
+
+
+FINANCIAL_FIELDS = {"custo_parada", "valor_pecas", "custo_mao_obra", "custo_total_os"}
+
+def filter_financial_fields(data: dict, user: User, os_setor: str = None) -> dict:
+    """
+    Remove campos financeiros de acordo com o perfil do usuário.
+    ADMIN/SUPER_ADMIN → tudo
+    LIDER             → somente do próprio setor
+    TECNICO/OPERADOR  → nenhum campo financeiro
+    """
+    role = user.role
+    if role in (UserRole.ADMIN,):
+        return data
+
+    if role == UserRole.LIDER:
+        # Lider vê campos financeiros só do próprio setor
+        if os_setor and user.setor and os_setor.upper() != user.setor.upper():
+            return {k: v for k, v in data.items() if k not in FINANCIAL_FIELDS}
+        return data
+
+    # TECNICO / OPERADOR — sem campos financeiros
+    return {k: v for k, v in data.items() if k not in FINANCIAL_FIELDS}
+
+
+def criar_notificacao(db: Session, org_id, destinatario_id, tipo: str, titulo: str, mensagem: str, os_id=None):
+    """Cria uma notificação in-app para o destinatário."""
+    notif = Notificacao(
+        org_id=org_id,
+        destinatario_id=destinatario_id,
+        tipo=tipo,
+        titulo=titulo,
+        mensagem=mensagem,
+        os_id=os_id,
+    )
+    db.add(notif)
+    db.commit()
+
+
+def send_email_notification(db: Session, org: "Organization", destinatario_id, subject: str, html_body: str):
+    """Send email if plan includes notificacoes_email and SMTP is configured. Always fails silently."""
+    if not PLAN_LIMITS.get(org.plano, {}).get("notificacoes_email"):
+        return
+    if not SMTP_HOST or not SMTP_USER:
+        return
+    try:
+        dest = db.query(User).filter(User.id == destinatario_id, User.ativo == True).first()
+        if not dest:
+            return
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"[AURIX] {subject}"
+        msg["From"] = SMTP_FROM
+        msg["To"] = dest.email
+        msg.attach(MIMEText(html_body, "html"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=5) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(SMTP_USER, SMTP_PASSWORD)
+            smtp.sendmail(SMTP_FROM, [dest.email], msg.as_string())
+    except Exception as exc:
+        logger.warning("Email notification failed: %s", exc)
+
+
+# ========== MOTOR PREDITIVO ==========
+
+def _linear_slope(values: list) -> float:
+    """Slope da regressão linear simples (sem numpy)."""
+    n = len(values)
+    if n < 2:
+        return 0.0
+    x_mean = (n - 1) / 2
+    y_mean = sum(values) / n
+    num = sum((i - x_mean) * (v - y_mean) for i, v in enumerate(values))
+    den = sum((i - x_mean) ** 2 for i in range(n))
+    return num / den if den else 0.0
+
+
+def _zscore(value: float, values: list) -> float:
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    std = (sum((v - mean) ** 2 for v in values) / len(values)) ** 0.5
+    return (value - mean) / std if std else 0.0
+
+
+def _estimar_rul(historico: list, threshold_critico: float, slope: float) -> Optional[int]:
+    """Dias até o threshold crítico dado o slope diário atual."""
+    if not historico or slope <= 0:
+        return None
+    ultimo = historico[-1]
+    if ultimo >= threshold_critico:
+        return 0
+    dias = (threshold_critico - ultimo) / slope
+    return max(0, int(dias))
+
+
+def processar_leitura_preditiva(db: Session, leitura: LeituraSensor):
+    """Analisa uma leitura e cria AlertaPreditivo se necessário."""
+    config = db.query(ConfiguracaoMonitoramento).filter(
+        ConfiguracaoMonitoramento.equipamento_id == leitura.equipamento_id,
+        ConfiguracaoMonitoramento.parametro_nome == leitura.parametro_nome,
+        ConfiguracaoMonitoramento.ativo == True,
+    ).first()
+    if not config:
+        return
+
+    janela_inicio = datetime.now(timezone.utc) - timedelta(days=config.tendencia_janela_dias)
+    historico_rows = db.query(LeituraSensor).filter(
+        LeituraSensor.equipamento_id == leitura.equipamento_id,
+        LeituraSensor.parametro_nome == leitura.parametro_nome,
+        LeituraSensor.timestamp >= janela_inicio,
+    ).order_by(LeituraSensor.timestamp).all()
+
+    historico = [r.valor for r in historico_rows] or [leitura.valor]
+    slope = _linear_slope(historico)
+    z = _zscore(leitura.valor, historico)
+
+    # Determinar severidade
+    if leitura.valor >= config.threshold_critico:
+        severidade = "CRITICO"
+    elif leitura.valor >= config.threshold_atencao:
+        severidade = "ATENCAO"
+    elif abs(z) > 3:
+        severidade = "ATENCAO"
+    else:
+        leitura.processado = True
+        db.commit()
+        return
+
+    # Determinar tendência
+    if slope > 0.5:
+        tendencia = "CRITICA"
+    elif slope > 0.1:
+        tendencia = "CRESCENTE"
+    else:
+        tendencia = "ESTAVEL"
+
+    rul = _estimar_rul(historico, config.threshold_critico, slope)
+
+    # Evitar duplicatas de alerta aberto para o mesmo parâmetro
+    existente = db.query(AlertaPreditivo).filter(
+        AlertaPreditivo.equipamento_id == leitura.equipamento_id,
+        AlertaPreditivo.parametro_nome == leitura.parametro_nome,
+        AlertaPreditivo.status == "ABERTO",
+    ).first()
+    if existente:
+        existente.valor_atual = leitura.valor
+        existente.severidade = severidade
+        existente.tendencia = tendencia
+        existente.rul_estimado_dias = rul
+        leitura.processado = True
+        db.commit()
+        return
+
+    equip = db.query(Equipamento).filter(Equipamento.id == leitura.equipamento_id).first()
+    descricao = (
+        f"{leitura.parametro_nome} = {leitura.valor} {config.unidade or ''} "
+        f"(limite {severidade.lower()}: {config.threshold_atencao if severidade == 'ATENCAO' else config.threshold_critico})"
+    ).strip()
+
+    alerta = AlertaPreditivo(
+        organization_id=leitura.organization_id,
+        equipamento_id=leitura.equipamento_id,
+        parametro_nome=leitura.parametro_nome,
+        severidade=severidade,
+        valor_atual=leitura.valor,
+        threshold_violado=config.threshold_critico if severidade == "CRITICO" else config.threshold_atencao,
+        tendencia=tendencia,
+        rul_estimado_dias=rul,
+        descricao=descricao,
+    )
+    db.add(alerta)
+
+    # Atualizar status_saude do equipamento
+    if equip:
+        if severidade == "CRITICO":
+            equip.status_saude = "CRITICO"
+        elif getattr(equip, "status_saude", "NORMAL") != "CRITICO":
+            equip.status_saude = "ATENCAO"
+        if rul is not None:
+            equip.rul_estimado_dias = rul
+
+    leitura.processado = True
+    db.commit()
+    db.refresh(alerta)
+
+    # Notificar admin
+    admin = db.query(User).filter(
+        User.organization_id == leitura.organization_id,
+        User.role == UserRole.ADMIN,
+        User.ativo == True,
+    ).first()
+    org = db.query(Organization).filter(Organization.id == leitura.organization_id).first()
+    if admin and org:
+        nome_equip = equip.nome if equip else str(leitura.equipamento_id)
+        criar_notificacao(
+            db, org_id=leitura.organization_id, destinatario_id=admin.id,
+            tipo="alerta_preditivo",
+            titulo=f"Alerta {severidade}: {nome_equip}",
+            mensagem=descricao,
+        )
+        send_email_notification(
+            db, org, admin.id,
+            f"Alerta preditivo {severidade} — {nome_equip}",
+            f"<p><strong>{descricao}</strong></p>"
+            + (f"<p>RUL estimado: {rul} dias</p>" if rul is not None else ""),
+        )
+
+
+def _job_processar_leituras(db: Session):
+    """Processa leituras de sensor não processadas (job APScheduler)."""
+    leituras = db.query(LeituraSensor).filter(LeituraSensor.processado == False).limit(200).all()
+    for l in leituras:
+        try:
+            processar_leitura_preditiva(db, l)
+        except Exception as exc:
+            logger.warning("Erro ao processar leitura %s: %s", l.id, exc)
+
+
+def _job_atualizar_mttr_mtbf(db: Session):
+    """Recalcula MTTR/MTBF/disponibilidade de todos os equipamentos."""
+    orgs = db.query(Organization).filter(Organization.ativo == True).all()
+    for org in orgs:
+        equips = db.query(Equipamento).filter(
+            Equipamento.organization_id == org.id,
+            Equipamento.ativo == True,
+        ).all()
+        for equip in equips:
+            os_list = db.query(OrdemServico).filter(
+                OrdemServico.organization_id == org.id,
+                OrdemServico.equipamento_id == equip.id,
+                OrdemServico.tipo == TipoOS.CORRETIVA,
+                OrdemServico.status == StatusOS.FECHADA,
+            ).all()
+            if len(os_list) >= 2:
+                tempos_reparo = [o.tempo_reparo for o in os_list if o.tempo_reparo]
+                if tempos_reparo:
+                    mttr_min = sum(tempos_reparo) / len(tempos_reparo)
+                    equip.mttr_horas = round(mttr_min / 60, 2)
+                # MTBF = (total tempo operação) / num_falhas
+                datas = sorted([o.created_at for o in os_list if o.created_at])
+                if len(datas) >= 2:
+                    span_h = (datas[-1] - datas[0]).total_seconds() / 3600
+                    equip.mtbf_horas = round(span_h / len(os_list), 2)
+                    total_parada = sum((o.tempo_total or 0) for o in os_list) / 60
+                    equip.disponibilidade_percent = round(
+                        max(0.0, (span_h - total_parada) / span_h * 100) if span_h else 100.0, 1
+                    )
+    db.commit()
+
+
+def _job_gerar_os_preventivas(db: Session):
+    """Gera OS preventivas para planos com proxima_execucao dentro de antecedencia_alerta_dias."""
+    now = datetime.now(timezone.utc)
+    planos = db.query(PlanoPreventivo).filter(
+        PlanoPreventivo.ativo == True,
+        PlanoPreventivo.proxima_execucao != None,
+    ).all()
+    for plano in planos:
+        prazo = plano.proxima_execucao - timedelta(days=7)
+        if now >= prazo:
+            # Verificar se já existe OS preventiva para este plano recente
+            existe = db.query(OrdemServico).filter(
+                OrdemServico.organization_id == plano.organization_id,
+                OrdemServico.equipamento_id == plano.equipamento_id,
+                OrdemServico.tipo == TipoOS.PREVENTIVA,
+                OrdemServico.created_at >= now - timedelta(days=7),
+            ).first()
+            if not existe:
+                try:
+                    num = get_next_os_number(db, plano.organization_id)
+                    equip = db.query(Equipamento).filter(Equipamento.id == plano.equipamento_id).first()
+                    os_prev = OrdemServico(
+                        numero=num,
+                        organization_id=plano.organization_id,
+                        equipamento_id=plano.equipamento_id,
+                        tipo=TipoOS.PREVENTIVA,
+                        prioridade=PrioridadeOS.MEDIA,
+                        status=StatusOS.ABERTA,
+                        descricao=f"Manutenção preventiva — {plano.nome}",
+                        solicitante_id=db.query(User).filter(
+                            User.organization_id == plano.organization_id,
+                            User.role == UserRole.ADMIN,
+                        ).first().id,
+                    )
+                    db.add(os_prev)
+                    db.commit()
+                    logger.info("OS preventiva gerada: %s", num)
+                except Exception as exc:
+                    logger.warning("Erro ao gerar OS preventiva: %s", exc)
+
+
+def _job_auto_aprovar_sla(db: Session):
+    """Auto-aprova OS em aguardando_revisao com review_deadline expirado."""
+    now = datetime.now(timezone.utc)
+    pendentes = db.query(OrdemServico).filter(
+        OrdemServico.status == StatusOS.AGUARDANDO_REVISAO,
+        OrdemServico.review_deadline != None,
+        OrdemServico.review_deadline < now,
+    ).all()
+    for os in pendentes:
+        os.status = StatusOS.REVISADA
+        os.revisado_at = now
+        os.auto_approved = True
+        criar_notificacao(
+            db, org_id=os.organization_id, destinatario_id=os.solicitante_id,
+            tipo="os_revisada",
+            titulo=f"OS #{os.numero} auto-aprovada (SLA expirado)",
+            mensagem=f"A OS #{os.numero} foi aprovada automaticamente por expiração do prazo de revisão.",
+            os_id=os.id,
+        )
+    if pendentes:
+        db.commit()
+        logger.info("Auto-aprovadas %d OS por SLA expirado", len(pendentes))
+
+
+def _make_db_session():
+    db = SessionLocal()
+    try:
+        return db
+    except Exception:
+        db.close()
+        raise
+
+
+def _run_job(fn):
+    """Executa um job com sessão de DB dedicada, falha silenciosamente."""
+    db = None
+    try:
+        db = SessionLocal()
+        fn(db)
+    except Exception as exc:
+        logger.warning("Job %s falhou: %s", fn.__name__, exc)
+    finally:
+        if db:
+            db.close()
+
+
+_GRUPOS_PADRAO = {
+    "MECANICA": ["Manutenção Preventiva", "Manutenção Corretiva", "Manutenção Preditiva", "Utilidades"],
+    "TI": ["Infraestrutura", "Sistemas", "Conectividade", "Segurança"],
+    "ELETRICA": ["Alta Tensão", "Automação/CLP", "Instrumentação", "Utilidades"],
+}
+
+def seed_grupos_padrao(db: Session, org_id):
+    """Cria grupos e subgrupos padrão por setor para uma nova organização."""
+    for setor, subgrupos in _GRUPOS_PADRAO.items():
+        grp = Grupo(organization_id=org_id, nome=setor, descricao=f"Grupo padrão {setor}")
+        db.add(grp)
+        db.flush()
+        for sg_nome in subgrupos:
+            db.add(Subgrupo(organization_id=org_id, grupo_id=grp.id, nome=sg_nome))
+    db.commit()
+
+
 def check_brute_force(db: Session, identifier: str) -> bool:
     attempt = db.query(LoginAttempt).filter(LoginAttempt.identifier == identifier).first()
     if attempt and attempt.locked_until:
@@ -658,29 +1200,35 @@ def get_org_usage(db: Session, org_id) -> dict:
 
 def check_plan_limit(db: Session, org: Organization, resource: str) -> tuple:
     """Check if organization has reached its plan limit for a resource.
-    Returns (allowed: bool, message: str)"""
+    Returns (allowed: bool, message: str). -1 = unlimited."""
     usage = get_org_usage(db, org.id)
-    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.FREE])
-    
+    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.DEMO])
+
     limit_map = {
         "equipamentos": ("max_equipamentos", usage["equipamentos"]),
         "users": ("max_users", usage["users"]),
         "os": ("max_os_mes", usage["os_mes"]),
     }
-    
+
     if resource not in limit_map:
         return True, ""
-    
+
     limit_key, current = limit_map[resource]
     max_val = limits[limit_key]
-    
+
+    if max_val == -1:
+        return True, ""
+
     if current >= max_val:
         plan_label = limits["label"]
-        return False, f"Limite do plano {plan_label} atingido: {current}/{max_val} {resource}. Faça upgrade para continuar."
-    
+        return False, (
+            f"Limite do plano {plan_label} atingido: {current}/{max_val} {resource}. "
+            f"Faça upgrade para continuar."
+        )
+
     return True, ""
 
-def build_os_response(o, db: Session) -> OSResponse:
+def build_os_response(o, db: Session, user=None) -> OSResponse:
     """Build OSResponse with computed custo_parada and enriched names"""
     # Compute downtime cost
     custo_parada = None
@@ -690,14 +1238,18 @@ def build_os_response(o, db: Session) -> OSResponse:
         equipamento_nome = equip.nome
         if o.tempo_total and equip.valor_hora:
             custo_parada = round((o.tempo_total / 60) * equip.valor_hora, 2)
-    
+
     # Get reviewer name
     revisor_nome = None
     if o.revisor_id:
         revisor = db.query(User).filter(User.id == o.revisor_id).first()
         if revisor:
             revisor_nome = revisor.nome
-    
+
+    # Apply financial visibility: only ADMIN sees custo_parada
+    if user is not None and user.role not in (UserRole.ADMIN,):
+        custo_parada = None
+
     return OSResponse(
         id=str(o.id), numero=o.numero, equipamento_id=str(o.equipamento_id),
         equipamento_nome=equipamento_nome,
@@ -743,7 +1295,7 @@ def check_reincidencia(db: Session, org_id: str, equipamento_id: str, falha_tipo
     return count > 1
 
 # ========== APP SETUP ==========
-app = FastAPI(title="PCM - Sistema de Gestão de Manutenção Industrial", version="1.0.0")
+app = FastAPI(title="AURIX — Tecnologia para a Gestão Industrial", version="2.0.0")
 api_router = APIRouter(prefix="/api")
 
 # CORS
@@ -768,10 +1320,14 @@ async def register(data: UserRegister, response: Response, db: Session = Depends
     
     # Create organization
     org_nome = data.organization_nome or f"Empresa de {data.nome}"
-    org = Organization(nome=org_nome)
+    org = Organization(
+        nome=org_nome,
+        plano_trial_expira_em=datetime.now(timezone.utc) + timedelta(days=10),
+    )
     db.add(org)
     db.commit()
     db.refresh(org)
+    seed_grupos_padrao(db, org.id)
     
     # Create user as admin
     hashed = hash_password(data.password)
@@ -795,9 +1351,11 @@ async def register(data: UserRegister, response: Response, db: Session = Depends
         "email": user.email,
         "nome": user.nome,
         "role": user.role.value,
+        "setor": user.setor,
+        "is_lider": user.is_lider or False,
         "organization_id": str(user.organization_id),
         "ativo": user.ativo,
-        "access_token": access_token
+        "access_token": access_token,
     }
 
 @api_router.post("/auth/login")
@@ -828,9 +1386,11 @@ async def login(data: UserLogin, request: Request, response: Response, db: Sessi
         "email": user.email,
         "nome": user.nome,
         "role": user.role.value,
+        "setor": user.setor,
+        "is_lider": user.is_lider or False,
         "organization_id": str(user.organization_id),
         "ativo": user.ativo,
-        "access_token": access_token
+        "access_token": access_token,
     }
 
 @api_router.post("/auth/logout")
@@ -840,14 +1400,29 @@ async def logout(response: Response):
     return {"message": "Logout realizado com sucesso"}
 
 @api_router.get("/auth/me")
-async def get_me(user: User = Depends(get_current_user)):
+async def get_me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    limits = PLAN_LIMITS.get(org.plano if org else PlanoSaaS.DEMO, PLAN_LIMITS[PlanoSaaS.DEMO])
+    features = {
+        "modulo_preditivo": limits.get("modulo_preditivo", False),
+        "planos_preventivos": limits.get("planos_preventivos", False),
+        "relatorios": limits.get("relatorios", False),
+        "dashboard_avancado": limits.get("dashboard_avancado", False),
+        "aprovacao_setor": limits.get("aprovacao_setor", False),
+        "exportacao_pdf": limits.get("exportacao_pdf", False),
+        "kanban": limits.get("kanban", False),
+    }
     return {
         "id": str(user.id),
         "email": user.email,
         "nome": user.nome,
         "role": user.role.value,
+        "setor": user.setor,
+        "is_lider": user.is_lider or False,
         "organization_id": str(user.organization_id),
-        "ativo": user.ativo
+        "ativo": user.ativo,
+        "org_plano": org.plano.value if org else "demo",
+        "features": features,
     }
 
 @api_router.post("/auth/refresh")
@@ -899,7 +1474,8 @@ async def list_users(user: User = Depends(get_current_user), db: Session = Depen
     users = db.query(User).filter(User.organization_id == user.organization_id).all()
     return [UserResponse(
         id=str(u.id), email=u.email, nome=u.nome, role=u.role.value,
-        organization_id=str(u.organization_id), ativo=u.ativo, created_at=u.created_at
+        setor=u.setor, is_lider=u.is_lider or False,
+        organization_id=str(u.organization_id), ativo=u.ativo, created_at=u.created_at,
     ) for u in users]
 
 @api_router.post("/users", response_model=UserResponse)
@@ -922,20 +1498,25 @@ async def create_user(data: UserCreate, user: User = Depends(get_current_user), 
         password_hash=hash_password(data.password),
         nome=data.nome,
         role=data.role,
-        organization_id=user.organization_id
+        setor=data.setor,
+        is_lider=data.is_lider,
+        organization_id=user.organization_id,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    
+
     return UserResponse(
         id=str(new_user.id), email=new_user.email, nome=new_user.nome, role=new_user.role.value,
-        organization_id=str(new_user.organization_id), ativo=new_user.ativo, created_at=new_user.created_at
+        setor=new_user.setor, is_lider=new_user.is_lider or False,
+        organization_id=str(new_user.organization_id), ativo=new_user.ativo, created_at=new_user.created_at,
     )
 
 class UserUpdate(BaseModel):
     nome: Optional[str] = None
     role: Optional[UserRole] = None
+    setor: Optional[str] = None
+    is_lider: Optional[bool] = None
     ativo: Optional[bool] = None
 
 @api_router.put("/users/{user_id}", response_model=UserResponse)
@@ -958,20 +1539,23 @@ async def update_user(user_id: str, data: UserUpdate, user: User = Depends(get_c
         target_user.nome = data.nome
     if data.role is not None:
         target_user.role = data.role
+    if data.setor is not None:
+        target_user.setor = data.setor
+    if data.is_lider is not None:
+        target_user.is_lider = data.is_lider
     if data.ativo is not None:
-        # Prevent self-deactivation
         if str(target_user.id) == str(user.id) and not data.ativo:
             raise HTTPException(status_code=400, detail="Você não pode desativar sua própria conta")
         target_user.ativo = data.ativo
-    
+
     db.commit()
     db.refresh(target_user)
-    
     create_audit_log(db, str(user.organization_id), str(user.id), "user", str(target_user.id), "update")
-    
+
     return UserResponse(
         id=str(target_user.id), email=target_user.email, nome=target_user.nome, role=target_user.role.value,
-        organization_id=str(target_user.organization_id), ativo=target_user.ativo, created_at=target_user.created_at
+        setor=target_user.setor, is_lider=target_user.is_lider or False,
+        organization_id=str(target_user.organization_id), ativo=target_user.ativo, created_at=target_user.created_at,
     )
 
 @api_router.delete("/users/{user_id}")
@@ -1009,8 +1593,23 @@ async def get_organization(user: User = Depends(get_current_user), db: Session =
         raise HTTPException(status_code=404, detail="Organização não encontrada")
     
     usage = get_org_usage(db, org.id)
-    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.FREE])
-    
+    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.DEMO])
+
+    feature_labels = {
+        "relatorios": "Relatórios avançados",
+        "dashboard_avancado": "Dashboard avançado",
+        "kanban": "Kanban de OS",
+        "modulo_preditivo": "Análise preditiva",
+        "planos_preventivos": "Manutenção preventiva",
+        "aprovacao_setor": "Aprovação por setor",
+        "notificacoes_email": "Notificações por e-mail",
+        "exportacao_pdf": "Exportação PDF",
+        "api_iot": "API IoT / Webhooks",
+        "sso": "SSO / Login único",
+        "grupos_subgrupos": "Grupos e subgrupos",
+    }
+    features_list = [label for key, label in feature_labels.items() if limits.get(key)]
+
     return {
         "id": str(org.id),
         "nome": org.nome,
@@ -1025,7 +1624,10 @@ async def get_organization(user: User = Depends(get_current_user), db: Session =
             "max_os_mes": limits["max_os_mes"],
         },
         "usage": usage,
-        "features": limits.get("features", []),
+        "features": features_list,
+        "plan_features": limits,
+        "has_api_key": bool(org.api_key),
+        "api_key_preview": (org.api_key[:12] + "..." if org.api_key else None),
     }
 
 @api_router.put("/organization")
@@ -1049,6 +1651,134 @@ async def update_organization(data: OrganizationUpdate, user: User = Depends(get
     create_audit_log(db, str(user.organization_id), str(user.id), "organization", str(org.id), "update")
     
     return {"message": "Organização atualizada", "nome": org.nome}
+
+# ========== API KEY MANAGEMENT ==========
+
+@api_router.post("/organization/generate-api-key")
+async def generate_api_key(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Generate (or regenerate) API key for the organization. Admin only."""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode gerenciar API keys")
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    _require_feature(org, "api_iot")
+    new_key = "aurix_" + secrets.token_hex(28)
+    org.api_key = new_key
+    db.commit()
+    create_audit_log(db, str(user.organization_id), str(user.id), "organization", str(org.id), "generate_api_key")
+    return {"api_key": new_key}
+
+
+@api_router.delete("/organization/api-key")
+async def revoke_api_key(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Revoke the organization's API key. Admin only."""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode gerenciar API keys")
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    org.api_key = None
+    db.commit()
+    create_audit_log(db, str(user.organization_id), str(user.id), "organization", str(org.id), "revoke_api_key")
+    return {"message": "API key revogada"}
+
+
+# ========== IoT TELEMETRIA ==========
+
+class IoTTelemetria(BaseModel):
+    equipamento_id: str
+    sensor: str
+    valor: float
+    unidade: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    alerta: Optional[bool] = False
+    mensagem: Optional[str] = None
+
+
+async def _get_iot_org(request: Request, db: Session = Depends(get_db)) -> Organization:
+    """Authenticate IoT requests via X-API-Key header."""
+    api_key_header = request.headers.get("X-API-Key")
+    if not api_key_header:
+        raise HTTPException(status_code=401, detail="X-API-Key header obrigatório")
+    org = db.query(Organization).filter(
+        Organization.api_key == api_key_header,
+        Organization.ativo == True,
+    ).first()
+    if not org:
+        raise HTTPException(status_code=401, detail="API key inválida ou organização inativa")
+    _require_feature(org, "api_iot")
+    return org
+
+
+@api_router.post("/iot/telemetria", status_code=201)
+async def receive_telemetria(
+    payload: IoTTelemetria,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Receive sensor telemetry from IoT devices. Authenticated via X-API-Key."""
+    org = await _get_iot_org(request, db)
+
+    equip = db.query(Equipamento).filter(
+        Equipamento.id == payload.equipamento_id,
+        Equipamento.organization_id == org.id,
+    ).first()
+    if not equip:
+        raise HTTPException(status_code=404, detail="Equipamento não encontrado")
+
+    result = {
+        "recebido": True,
+        "equipamento": equip.nome,
+        "sensor": payload.sensor,
+        "valor": payload.valor,
+        "timestamp": (payload.timestamp or datetime.now(timezone.utc)).isoformat(),
+        "os_criada": False,
+    }
+
+    # Auto-create corrective OS on alert
+    if payload.alerta:
+        num = get_next_os_number(db, org.id)
+        desc = payload.mensagem or f"Alerta IoT: {payload.sensor} = {payload.valor} {payload.unidade or ''}".strip()
+        os_alert = OrdemServico(
+            numero=num,
+            organization_id=org.id,
+            equipamento_id=equip.id,
+            tipo=TipoOS.CORRETIVA,
+            prioridade=PrioridadeOS.ALTA,
+            status=StatusOS.ABERTA,
+            descricao=desc,
+            falha_tipo="iot_alert",
+            reincidente=check_reincidencia(db, str(org.id), payload.equipamento_id, "iot_alert"),
+        )
+        db.add(os_alert)
+        db.commit()
+        db.refresh(os_alert)
+        result["os_criada"] = True
+        result["os_numero"] = os_alert.numero
+
+        # Notify admin
+        admin = db.query(User).filter(
+            User.organization_id == org.id,
+            User.role == UserRole.ADMIN,
+            User.ativo == True,
+        ).first()
+        if admin:
+            criar_notificacao(
+                db, org_id=org.id, destinatario_id=admin.id,
+                tipo="iot_alert",
+                titulo=f"Alerta IoT: {equip.nome}",
+                mensagem=desc,
+                os_id=os_alert.id,
+            )
+            send_email_notification(
+                db, org, admin.id,
+                f"Alerta IoT — {equip.nome}",
+                f"<p><strong>Sensor:</strong> {payload.sensor}<br><strong>Valor:</strong> {payload.valor} {payload.unidade or ''}<br>{desc}</p>",
+            )
+
+    return result
+
 
 # ========== PASSWORD RESET ==========
 class PasswordResetRequest(BaseModel):
@@ -1259,7 +1989,7 @@ async def list_os(
     
     ordens = query.order_by(OrdemServico.created_at.desc()).all()
     
-    return [build_os_response(o, db) for o in ordens]
+    return [build_os_response(o, db, user=user) for o in ordens]
 
 @api_router.post("/ordens-servico", response_model=OSResponse)
 async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1302,8 +2032,8 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
     db.refresh(os)
     
     create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os.id), "create")
-    
-    return build_os_response(os, db)
+
+    return build_os_response(os, db, user=user)
 
 @api_router.put("/ordens-servico/{os_id}", response_model=OSResponse)
 async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1313,9 +2043,10 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
     ).first()
     if not os:
         raise HTTPException(status_code=404, detail="OS não encontrada")
-    
+
     import json as json_lib
     now = datetime.now(timezone.utc)
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
     
     # Track field changes for audit
     changes = {}
@@ -1350,16 +2081,55 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
             if leader:
                 os.revisor_id = leader.id
                 changes["revisor_auto_atribuido"] = leader.nome
-            
+                criar_notificacao(
+                    db, org_id=os.organization_id, destinatario_id=leader.id,
+                    tipo="revisao_pendente",
+                    titulo=f"OS #{os.numero} aguarda sua revisão",
+                    mensagem=f"A OS #{os.numero} foi concluída e aguarda revisão. Prazo: 24 horas.",
+                    os_id=os.id,
+                )
+                if org:
+                    send_email_notification(
+                        db, org, leader.id,
+                        f"OS #{os.numero} aguarda sua revisão",
+                        f"<p>A OS <strong>#{os.numero}</strong> foi concluída e aguarda sua revisão.</p><p>Prazo: 24 horas.</p>",
+                    )
+
             # Set 24h review deadline
             os.review_deadline = now + timedelta(hours=24)
-        
+
         elif data.status == StatusOS.REVISADA:
             os.revisado_at = now
             os.revisor_id = user.id
-        
+            criar_notificacao(
+                db, org_id=os.organization_id, destinatario_id=os.solicitante_id,
+                tipo="os_revisada",
+                titulo=f"OS #{os.numero} revisada",
+                mensagem=f"Sua ordem de serviço #{os.numero} foi revisada e está sendo encerrada.",
+                os_id=os.id,
+            )
+            if org:
+                send_email_notification(
+                    db, org, os.solicitante_id,
+                    f"OS #{os.numero} revisada",
+                    f"<p>Sua ordem de serviço <strong>#{os.numero}</strong> foi revisada e está sendo encerrada.</p>",
+                )
+
         elif data.status == StatusOS.FECHADA:
             os.fechado_at = now
+            criar_notificacao(
+                db, org_id=os.organization_id, destinatario_id=os.solicitante_id,
+                tipo="os_fechada",
+                titulo=f"OS #{os.numero} encerrada",
+                mensagem=f"Sua ordem de serviço #{os.numero} foi oficialmente encerrada.",
+                os_id=os.id,
+            )
+            if org:
+                send_email_notification(
+                    db, org, os.solicitante_id,
+                    f"OS #{os.numero} encerrada",
+                    f"<p>Sua ordem de serviço <strong>#{os.numero}</strong> foi oficialmente encerrada.</p>",
+                )
     
     if data.solucao:
         if os.solucao != data.solucao:
@@ -1393,7 +2163,7 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
         dados_novos=json_lib.dumps(changes, ensure_ascii=False) if changes else None
     )
     
-    return build_os_response(os, db)
+    return build_os_response(os, db, user=user)
 
 @api_router.post("/ordens-servico/auto-approve")
 async def auto_approve_expired_reviews(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1441,7 +2211,7 @@ async def get_pending_reviews(user: User = Depends(get_current_user), db: Sessio
     
     results = []
     for o in pending:
-        resp = build_os_response(o, db)
+        resp = build_os_response(o, db, user=user)
         time_remaining = None
         if o.review_deadline:
             remaining = (o.review_deadline - now).total_seconds()
@@ -1462,7 +2232,7 @@ async def get_os(os_id: str, user: User = Depends(get_current_user), db: Session
     ).first()
     if not os:
         raise HTTPException(status_code=404, detail="OS não encontrada")
-    return build_os_response(os, db)
+    return build_os_response(os, db, user=user)
 
 # ========== CUSTOS ENDPOINTS ==========
 @api_router.get("/custos", response_model=List[CustoResponse])
@@ -1511,6 +2281,8 @@ async def create_custo(data: CustoCreate, user: User = Depends(get_current_user)
 # ========== PLANOS PREVENTIVOS ENDPOINTS ==========
 @api_router.get("/planos-preventivos", response_model=List[PlanoResponse])
 async def list_planos(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "planos_preventivos")
     planos = db.query(PlanoPreventivo).filter(
         PlanoPreventivo.organization_id == user.organization_id,
         PlanoPreventivo.ativo == True
@@ -1526,6 +2298,8 @@ async def list_planos(user: User = Depends(get_current_user), db: Session = Depe
 async def create_plano(data: PlanoCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
         raise HTTPException(status_code=403, detail="Acesso negado")
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "planos_preventivos")
     
     # Verify equipment exists
     equipamento = db.query(Equipamento).filter(
@@ -1859,6 +2633,71 @@ async def list_auditoria(
         "created_at": l.created_at.isoformat()
     } for l in logs]
 
+# ========== NOTIFICAÇÕES ENDPOINTS ==========
+@api_router.get("/notificacoes")
+async def list_notificacoes(
+    apenas_nao_lidas: bool = False,
+    limit: int = 30,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Notificacao).filter(
+        Notificacao.destinatario_id == user.id,
+        Notificacao.org_id == user.organization_id,
+    )
+    if apenas_nao_lidas:
+        query = query.filter(Notificacao.lida == False)
+    notifs = query.order_by(Notificacao.criada_em.desc()).limit(limit).all()
+    return [
+        {
+            "id": str(n.id),
+            "tipo": n.tipo,
+            "titulo": n.titulo,
+            "mensagem": n.mensagem,
+            "os_id": str(n.os_id) if n.os_id else None,
+            "lida": n.lida,
+            "criada_em": n.criada_em.isoformat(),
+            "lida_em": n.lida_em.isoformat() if n.lida_em else None,
+        }
+        for n in notifs
+    ]
+
+
+@api_router.get("/notificacoes/count")
+async def count_nao_lidas(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    count = db.query(Notificacao).filter(
+        Notificacao.destinatario_id == user.id,
+        Notificacao.org_id == user.organization_id,
+        Notificacao.lida == False,
+    ).count()
+    return {"nao_lidas": count}
+
+
+@api_router.post("/notificacoes/{notif_id}/ler")
+async def marcar_lida(notif_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    notif = db.query(Notificacao).filter(
+        Notificacao.id == notif_id,
+        Notificacao.destinatario_id == user.id,
+    ).first()
+    if not notif:
+        raise HTTPException(status_code=404, detail="Notificação não encontrada")
+    notif.lida = True
+    notif.lida_em = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True}
+
+
+@api_router.post("/notificacoes/ler-todas")
+async def marcar_todas_lidas(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.query(Notificacao).filter(
+        Notificacao.destinatario_id == user.id,
+        Notificacao.org_id == user.organization_id,
+        Notificacao.lida == False,
+    ).update({"lida": True, "lida_em": datetime.now(timezone.utc)})
+    db.commit()
+    return {"ok": True}
+
+
 # ========== BILLING ENDPOINTS ==========
 @api_router.get("/billing/plan")
 async def get_billing_plan(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1868,14 +2707,21 @@ async def get_billing_plan(user: User = Depends(get_current_user), db: Session =
         raise HTTPException(status_code=404, detail="Organização não encontrada")
     
     usage = get_org_usage(db, org.id)
-    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.FREE])
-    
+    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.DEMO])
+
+    def safe_percent(current, maximum):
+        if maximum == -1:
+            return 0.0
+        if not maximum:
+            return 0.0
+        return round((current / maximum) * 100, 1)
+
     usage_percent = {
-        "equipamentos": round((usage["equipamentos"] / limits["max_equipamentos"]) * 100, 1) if limits["max_equipamentos"] > 0 else 0,
-        "users": round((usage["users"] / limits["max_users"]) * 100, 1) if limits["max_users"] > 0 else 0,
-        "os_mes": round((usage["os_mes"] / limits["max_os_mes"]) * 100, 1) if limits["max_os_mes"] > 0 else 0,
+        "equipamentos": safe_percent(usage["equipamentos"], limits["max_equipamentos"]),
+        "users": safe_percent(usage["users"], limits["max_users"]),
+        "os_mes": safe_percent(usage["os_mes"], limits["max_os_mes"]),
     }
-    
+
     return {
         "plano": org.plano.value,
         "subscription_status": org.subscription_status or "active",
@@ -1890,12 +2736,16 @@ async def get_billing_plan(user: User = Depends(get_current_user), db: Session =
             plan.value: {
                 "label": info["label"],
                 "price": info["price"],
+                "preco_mensal": info.get("preco_mensal", info["price"]),
                 "max_equipamentos": info["max_equipamentos"],
                 "max_users": info["max_users"],
                 "max_os_mes": info["max_os_mes"],
+                "destaque": info.get("destaque", False),
+                "cta_tipo": info.get("cta_tipo", "stripe_checkout"),
+                "features": info.get("features", []),
             }
             for plan, info in PLAN_LIMITS.items()
-        }
+        },
     }
 
 @api_router.post("/billing/checkout")
@@ -1915,8 +2765,11 @@ async def create_billing_checkout(data: CheckoutRequest, request: Request, user:
     except ValueError:
         raise HTTPException(status_code=400, detail="Plano inválido")
     
-    if target_plan == PlanoSaaS.FREE:
-        raise HTTPException(status_code=400, detail="Não é possível fazer checkout para o plano Free")
+    if target_plan == PlanoSaaS.DEMO:
+        raise HTTPException(status_code=400, detail="Não é possível fazer checkout para o plano Demo")
+
+    if target_plan == PlanoSaaS.ENTERPRISE:
+        raise HTTPException(status_code=400, detail="Para o plano Enterprise, entre em contato com o comercial Aurix")
     
     if org.plano == target_plan:
         raise HTTPException(status_code=400, detail="Você já está neste plano")
@@ -2091,6 +2944,1136 @@ async def list_transactions(user: User = Depends(get_current_user), db: Session 
         "created_at": t.created_at.isoformat() if t.created_at else None,
     } for t in transactions]
 
+@api_router.get("/billing/portal")
+async def get_billing_portal(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return Stripe Customer Portal URL for managing subscription/payment methods"""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    if not org.stripe_customer_id:
+        raise HTTPException(status_code=400, detail="Nenhuma assinatura Stripe ativa. Faça upgrade para um plano pago primeiro.")
+    try:
+        import stripe as stripe_sdk
+        stripe_sdk.api_key = os.environ.get("STRIPE_API_KEY", "")
+        origin = request.headers.get("origin", "")
+        return_url = f"{origin}/billing"
+        session = stripe_sdk.billing_portal.Session.create(
+            customer=org.stripe_customer_id,
+            return_url=return_url,
+        )
+        return {"url": session.url}
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Integração Stripe não disponível")
+    except Exception as e:
+        logger.error(f"Stripe portal error: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao criar sessão do portal Stripe")
+
+@api_router.post("/billing/cancelar")
+async def cancelar_assinatura(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Cancel the active Stripe subscription and downgrade org to DEMO"""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+    if org.plano == "DEMO":
+        raise HTTPException(status_code=400, detail="Você já está no plano Demo")
+    cancelled_in_stripe = False
+    if org.stripe_subscription_id:
+        try:
+            import stripe as stripe_sdk
+            stripe_sdk.api_key = os.environ.get("STRIPE_API_KEY", "")
+            stripe_sdk.Subscription.cancel(org.stripe_subscription_id)
+            cancelled_in_stripe = True
+        except Exception as e:
+            logger.warning(f"Stripe cancel error (continuing): {e}")
+    org.plano = "DEMO"
+    org.stripe_subscription_id = None
+    db.commit()
+    return {"ok": True, "cancelled_in_stripe": cancelled_in_stripe, "plano": "DEMO"}
+
+# ========== CONFIABILIDADE / RELIABILITY ==========
+import math
+
+@api_router.get("/confiabilidade")
+async def get_confiabilidade(
+    t: float = 24.0,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Calcula indicadores de confiabilidade por equipamento:
+    - λ (lambda) = falhas / tempo_operacao (taxa de falha)
+    - R(t) = e^(-λ*t) (confiabilidade exponencial)
+    - Risco = (1 - R(t)) * criticidade_equipamento (probabilidade × impacto)
+    - Alertas automáticos por nível de risco
+
+    Query param 't' = horizonte de tempo em horas para projeção (default: 24h)
+    """
+    from sqlalchemy import func
+
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+
+    org_id = user.organization_id
+
+    # Buscar todos equipamentos ativos
+    equipamentos = db.query(Equipamento).filter(
+        Equipamento.organization_id == org_id,
+        Equipamento.ativo == True
+    ).all()
+
+    if not equipamentos:
+        return {
+            "horizonte_horas": t,
+            "resumo": {"total_equipamentos": 0, "alertas_criticos": 0, "alertas_atencao": 0, "confiabilidade_media": 100.0, "lambda_medio": 0.0},
+            "equipamentos": [],
+            "alertas": []
+        }
+
+    now = datetime.now(timezone.utc)
+
+    # Primeira OS corretiva global (para calcular janela de operação)
+    first_os_global = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == org_id,
+        OrdemServico.tipo == TipoOS.CORRETIVA
+    ).order_by(OrdemServico.created_at).first()
+
+    resultados = []
+    alertas = []
+
+    for equip in equipamentos:
+        # Buscar somente OS corretivas com parada para este equipamento
+        os_corretivas = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == org_id,
+            OrdemServico.equipamento_id == equip.id,
+            OrdemServico.tipo == TipoOS.CORRETIVA,
+            OrdemServico.status.in_([StatusOS.FECHADA, StatusOS.REVISADA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_REVISAO])
+        ).all()
+
+        falhas = len(os_corretivas)
+
+        # Tempo total parado (minutos → horas)
+        tempo_parado_horas = sum(o.tempo_total or 0 for o in os_corretivas) / 60
+
+        # Tempo de operação: desde a criação do equipamento ou primeira OS, até agora, menos tempo parado
+        ref_date = equip.created_at or (first_os_global.created_at if first_os_global else now)
+        tempo_total_horas = max((now - ref_date).total_seconds() / 3600, 1)  # no mínimo 1h
+        tempo_operacao = max(tempo_total_horas - tempo_parado_horas, 1)  # no mínimo 1h
+
+        # λ (lambda) = falhas / tempo_operacao
+        lam = falhas / tempo_operacao if tempo_operacao > 0 else 0
+
+        # MTBF = 1/λ (horas)
+        mtbf = (1 / lam) if lam > 0 else tempo_operacao
+
+        # R(t) = e^(-λ*t) — confiabilidade no horizonte t
+        r_t = math.exp(-lam * t) if lam > 0 else 1.0
+        r_t_percent = round(r_t * 100, 2)
+
+        # Probabilidade de falha no horizonte
+        prob_falha = 1 - r_t
+
+        # Risco = probabilidade × impacto (criticidade 1-5 normalizada para 0-1)
+        impacto_normalizado = equip.criticidade / 5.0
+        risco = prob_falha * impacto_normalizado
+        risco_percent = round(risco * 100, 2)
+
+        # Custo de risco projetado (probabilidade × custo/hora × horizonte)
+        custo_risco = round(prob_falha * equip.valor_hora * t, 2) if equip.valor_hora else 0
+
+        # Classificação de risco
+        if risco_percent >= 60:
+            nivel_risco = "critico"
+        elif risco_percent >= 30:
+            nivel_risco = "alto"
+        elif risco_percent >= 10:
+            nivel_risco = "atencao"
+        else:
+            nivel_risco = "normal"
+
+        # Classificação de lambda
+        if lam >= 0.05:
+            lambda_status = "instavel"
+        elif lam >= 0.01:
+            lambda_status = "atencao"
+        else:
+            lambda_status = "estavel"
+
+        resultado = {
+            "equipamento_id": str(equip.id),
+            "codigo": equip.codigo,
+            "nome": equip.nome,
+            "criticidade": equip.criticidade,
+            "valor_hora": equip.valor_hora,
+            "falhas": falhas,
+            "tempo_operacao_horas": round(tempo_operacao, 2),
+            "tempo_parado_horas": round(tempo_parado_horas, 2),
+            "lambda": round(lam, 6),
+            "lambda_status": lambda_status,
+            "mtbf_horas": round(mtbf, 2),
+            "confiabilidade_percent": r_t_percent,
+            "prob_falha_percent": round(prob_falha * 100, 2),
+            "risco_percent": risco_percent,
+            "nivel_risco": nivel_risco,
+            "custo_risco_projetado": custo_risco,
+        }
+        resultados.append(resultado)
+
+        # Gerar alertas automáticos
+        if nivel_risco == "critico":
+            alertas.append({
+                "tipo": "critico",
+                "equipamento": equip.nome,
+                "codigo": equip.codigo,
+                "mensagem": f"⚠️ RISCO CRÍTICO: {equip.nome} ({equip.codigo}) — confiabilidade {r_t_percent}% em {t}h. λ={round(lam, 4)} falhas/h. Ação imediata necessária.",
+                "lambda": round(lam, 4),
+                "confiabilidade": r_t_percent,
+                "risco": risco_percent,
+            })
+        elif nivel_risco == "alto":
+            alertas.append({
+                "tipo": "alto",
+                "equipamento": equip.nome,
+                "codigo": equip.codigo,
+                "mensagem": f"🔶 RISCO ALTO: {equip.nome} ({equip.codigo}) — confiabilidade {r_t_percent}% em {t}h. Priorizar RCA e preventiva.",
+                "lambda": round(lam, 4),
+                "confiabilidade": r_t_percent,
+                "risco": risco_percent,
+            })
+        elif nivel_risco == "atencao":
+            alertas.append({
+                "tipo": "atencao",
+                "equipamento": equip.nome,
+                "codigo": equip.codigo,
+                "mensagem": f"🟡 ATENÇÃO: {equip.nome} ({equip.codigo}) — confiabilidade {r_t_percent}% em {t}h. Monitorar tendência.",
+                "lambda": round(lam, 4),
+                "confiabilidade": r_t_percent,
+                "risco": risco_percent,
+            })
+
+    # Ordenar equipamentos por risco (maior primeiro)
+    resultados.sort(key=lambda x: x["risco_percent"], reverse=True)
+    alertas.sort(key=lambda x: x["risco"], reverse=True)
+
+    # Resumo
+    lambdas = [r["lambda"] for r in resultados if r["lambda"] > 0]
+    confiabilidades = [r["confiabilidade_percent"] for r in resultados]
+
+    resumo = {
+        "total_equipamentos": len(resultados),
+        "alertas_criticos": len([a for a in alertas if a["tipo"] == "critico"]),
+        "alertas_alto": len([a for a in alertas if a["tipo"] == "alto"]),
+        "alertas_atencao": len([a for a in alertas if a["tipo"] == "atencao"]),
+        "confiabilidade_media": round(sum(confiabilidades) / len(confiabilidades), 2) if confiabilidades else 100.0,
+        "lambda_medio": round(sum(lambdas) / len(lambdas), 6) if lambdas else 0,
+        "equipamentos_instáveis": len([r for r in resultados if r["lambda_status"] == "instavel"]),
+    }
+
+    return {
+        "horizonte_horas": t,
+        "resumo": resumo,
+        "equipamentos": resultados,
+        "alertas": alertas,
+    }
+
+@api_router.get("/confiabilidade/{equipamento_id}/curva")
+async def get_curva_confiabilidade(
+    equipamento_id: str,
+    max_t: float = 168.0,
+    pontos: int = 50,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Gera a curva de confiabilidade R(t) = e^(-λt) para um equipamento específico.
+    Retorna pontos da curva para plotar gráfico.
+
+    - max_t: horizonte máximo em horas (default: 168h = 1 semana)
+    - pontos: número de pontos na curva (default: 50)
+    """
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+
+    equip = db.query(Equipamento).filter(
+        Equipamento.id == equipamento_id,
+        Equipamento.organization_id == user.organization_id
+    ).first()
+
+    if not equip:
+        raise HTTPException(status_code=404, detail="Equipamento não encontrado")
+
+    now = datetime.now(timezone.utc)
+
+    # Buscar OS corretivas
+    os_corretivas = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == user.organization_id,
+        OrdemServico.equipamento_id == equip.id,
+        OrdemServico.tipo == TipoOS.CORRETIVA,
+        OrdemServico.status.in_([StatusOS.FECHADA, StatusOS.REVISADA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_REVISAO])
+    ).all()
+
+    falhas = len(os_corretivas)
+    tempo_parado = sum(o.tempo_total or 0 for o in os_corretivas) / 60
+    ref_date = equip.created_at or now
+    tempo_total = max((now - ref_date).total_seconds() / 3600, 1)
+    tempo_operacao = max(tempo_total - tempo_parado, 1)
+
+    lam = falhas / tempo_operacao if tempo_operacao > 0 else 0
+    mtbf = (1 / lam) if lam > 0 else tempo_operacao
+
+    # Gerar pontos da curva
+    curva = []
+    step = max_t / pontos
+    for i in range(pontos + 1):
+        t_val = round(step * i, 2)
+        r_val = math.exp(-lam * t_val) if lam > 0 else 1.0
+        curva.append({
+            "t": t_val,
+            "R_t": round(r_val * 100, 2),
+            "prob_falha": round((1 - r_val) * 100, 2),
+        })
+
+    return {
+        "equipamento": {
+            "id": str(equip.id),
+            "codigo": equip.codigo,
+            "nome": equip.nome,
+            "criticidade": equip.criticidade,
+        },
+        "parametros": {
+            "lambda": round(lam, 6),
+            "mtbf_horas": round(mtbf, 2),
+            "falhas": falhas,
+            "tempo_operacao_horas": round(tempo_operacao, 2),
+        },
+        "curva": curva,
+    }
+
+# ========== RELATÓRIOS ==========
+
+def sugerir_upgrade(plano_atual: PlanoSaaS, feature: str) -> str:
+    ordem = [PlanoSaaS.DEMO, PlanoSaaS.ESSENCIAL, PlanoSaaS.PROFISSIONAL, PlanoSaaS.AVANCADO, PlanoSaaS.ENTERPRISE]
+    idx = ordem.index(plano_atual) if plano_atual in ordem else 0
+    for p in ordem[idx + 1:]:
+        if PLAN_LIMITS.get(p, {}).get(feature):
+            return p.value
+    return PlanoSaaS.ENTERPRISE.value
+
+
+def _require_feature(org: Organization, feature: str):
+    plano = org.plano if org else PlanoSaaS.DEMO
+    limits = PLAN_LIMITS.get(plano, PLAN_LIMITS[PlanoSaaS.DEMO])
+    if not limits.get(feature, False):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "feature_locked",
+                "feature": feature,
+                "mensagem": f"O recurso '{feature}' não está disponível no plano {limits.get('label', str(plano))}.",
+                "plano_atual": plano.value if hasattr(plano, "value") else str(plano),
+                "upgrade_sugerido": sugerir_upgrade(plano, feature),
+                "url_upgrade": "/billing",
+            }
+        )
+
+
+@api_router.get("/relatorios/os")
+async def relatorio_os(
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
+    status: Optional[str] = None,
+    tipo: Optional[str] = None,
+    equipamento_id: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "relatorios")
+
+    query = db.query(OrdemServico).filter(OrdemServico.organization_id == user.organization_id)
+
+    if data_inicio:
+        try:
+            dt = datetime.fromisoformat(data_inicio).replace(tzinfo=timezone.utc)
+            query = query.filter(OrdemServico.created_at >= dt)
+        except ValueError:
+            pass
+    if data_fim:
+        try:
+            dt = datetime.fromisoformat(data_fim).replace(tzinfo=timezone.utc)
+            query = query.filter(OrdemServico.created_at <= dt)
+        except ValueError:
+            pass
+    if status:
+        query = query.filter(OrdemServico.status == status)
+    if tipo:
+        query = query.filter(OrdemServico.tipo == tipo)
+    if equipamento_id:
+        query = query.filter(OrdemServico.equipamento_id == equipamento_id)
+
+    ordens = query.order_by(OrdemServico.created_at.desc()).all()
+
+    # Enrich with equipment names
+    eq_map = {str(e.id): e.nome for e in db.query(Equipamento).filter(Equipamento.organization_id == user.organization_id).all()}
+    user_map = {str(u.id): u.nome for u in db.query(User).filter(User.organization_id == user.organization_id).all()}
+
+    rows = []
+    for o in ordens:
+        rows.append({
+            "numero": o.numero,
+            "equipamento": eq_map.get(str(o.equipamento_id), "—"),
+            "tipo": o.tipo.value,
+            "prioridade": o.prioridade.value,
+            "status": o.status.value,
+            "descricao": o.descricao,
+            "solicitante": user_map.get(str(o.solicitante_id), "—"),
+            "tecnico": user_map.get(str(o.tecnico_id), "—") if o.tecnico_id else "—",
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+            "tempo_resposta_min": o.tempo_resposta,
+            "tempo_reparo_min": o.tempo_reparo,
+            "tempo_total_min": o.tempo_total,
+            "dentro_sla": o.dentro_sla,
+            "reincidente": o.reincidente,
+            "falha_tipo": o.falha_tipo,
+        })
+
+    total = len(ordens)
+    por_status = {}
+    for o in ordens:
+        por_status[o.status.value] = por_status.get(o.status.value, 0) + 1
+    por_tipo = {}
+    for o in ordens:
+        por_tipo[o.tipo.value] = por_tipo.get(o.tipo.value, 0) + 1
+
+    fechadas = [o for o in ordens if o.status in (StatusOS.FECHADA, StatusOS.REVISADA)]
+    sla_ok = sum(1 for o in fechadas if o.dentro_sla)
+    tempos_reparo = [o.tempo_reparo for o in fechadas if o.tempo_reparo]
+    media_reparo = round(sum(tempos_reparo) / len(tempos_reparo), 1) if tempos_reparo else None
+
+    return {
+        "total": total,
+        "por_status": por_status,
+        "por_tipo": por_tipo,
+        "sla_percent": round(sla_ok / len(fechadas) * 100, 1) if fechadas else None,
+        "media_reparo_min": media_reparo,
+        "ordens": rows,
+    }
+
+
+@api_router.get("/relatorios/custos")
+async def relatorio_custos(
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "relatorios")
+    if user.role not in (UserRole.ADMIN,):
+        raise HTTPException(status_code=403, detail="Apenas administradores podem acessar relatório financeiro.")
+
+    query = db.query(CustoOS).filter(CustoOS.organization_id == user.organization_id)
+    if data_inicio:
+        try:
+            dt = datetime.fromisoformat(data_inicio).replace(tzinfo=timezone.utc)
+            query = query.filter(CustoOS.created_at >= dt)
+        except ValueError:
+            pass
+    if data_fim:
+        try:
+            dt = datetime.fromisoformat(data_fim).replace(tzinfo=timezone.utc)
+            query = query.filter(CustoOS.created_at <= dt)
+        except ValueError:
+            pass
+
+    custos = query.all()
+
+    eq_map = {str(e.id): e.nome for e in db.query(Equipamento).filter(Equipamento.organization_id == user.organization_id).all()}
+    os_map = {str(o.id): o for o in db.query(OrdemServico).filter(OrdemServico.organization_id == user.organization_id).all()}
+
+    total_geral = sum(c.valor * c.quantidade for c in custos)
+
+    por_tipo: dict = {}
+    for c in custos:
+        tipo = c.tipo.value
+        por_tipo[tipo] = por_tipo.get(tipo, 0) + c.valor * c.quantidade
+
+    por_equipamento: dict = {}
+    for c in custos:
+        os = os_map.get(str(c.ordem_servico_id))
+        if os:
+            eq_nome = eq_map.get(str(os.equipamento_id), "Desconhecido")
+            por_equipamento[eq_nome] = por_equipamento.get(eq_nome, 0) + c.valor * c.quantidade
+
+    por_equip_sorted = sorted(
+        [{"equipamento": k, "total": round(v, 2)} for k, v in por_equipamento.items()],
+        key=lambda x: x["total"], reverse=True
+    )
+
+    return {
+        "total_geral": round(total_geral, 2),
+        "por_tipo": {k: round(v, 2) for k, v in por_tipo.items()},
+        "por_equipamento": por_equip_sorted,
+        "total_registros": len(custos),
+    }
+
+
+@api_router.get("/relatorios/pareto")
+async def relatorio_pareto(
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "relatorios")
+
+    query = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == user.organization_id,
+        OrdemServico.tipo == TipoOS.CORRETIVA,
+    )
+    if data_inicio:
+        try:
+            dt = datetime.fromisoformat(data_inicio).replace(tzinfo=timezone.utc)
+            query = query.filter(OrdemServico.created_at >= dt)
+        except ValueError:
+            pass
+    if data_fim:
+        try:
+            dt = datetime.fromisoformat(data_fim).replace(tzinfo=timezone.utc)
+            query = query.filter(OrdemServico.created_at <= dt)
+        except ValueError:
+            pass
+
+    ordens = query.all()
+    total = len(ordens)
+
+    eq_map = {str(e.id): e.nome for e in db.query(Equipamento).filter(Equipamento.organization_id == user.organization_id).all()}
+
+    por_tipo_falha: dict = {}
+    por_equipamento: dict = {}
+    por_causa: dict = {}
+
+    for o in ordens:
+        if o.falha_tipo:
+            por_tipo_falha[o.falha_tipo] = por_tipo_falha.get(o.falha_tipo, 0) + 1
+        eq_nome = eq_map.get(str(o.equipamento_id), "Desconhecido")
+        por_equipamento[eq_nome] = por_equipamento.get(eq_nome, 0) + 1
+        if o.falha_causa:
+            por_causa[o.falha_causa] = por_causa.get(o.falha_causa, 0) + 1
+
+    def build_pareto(d: dict):
+        items = sorted([{"label": k, "count": v} for k, v in d.items()], key=lambda x: x["count"], reverse=True)
+        acc = 0
+        for item in items:
+            acc += item["count"]
+            item["percent"] = round(item["count"] / total * 100, 1) if total else 0
+            item["acumulado"] = round(acc / total * 100, 1) if total else 0
+        return items
+
+    return {
+        "total_corretivas": total,
+        "por_tipo_falha": build_pareto(por_tipo_falha),
+        "por_equipamento": build_pareto(por_equipamento),
+        "por_causa": build_pareto(por_causa),
+    }
+
+
+@api_router.get("/relatorios/preventivos")
+async def relatorio_preventivos(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "relatorios")
+
+    now = datetime.now(timezone.utc)
+    planos = db.query(PlanoPreventivo).filter(
+        PlanoPreventivo.organization_id == user.organization_id,
+        PlanoPreventivo.ativo == True,
+    ).all()
+
+    eq_map = {str(e.id): e.nome for e in db.query(Equipamento).filter(Equipamento.organization_id == user.organization_id).all()}
+
+    total = len(planos)
+    vencidos = [p for p in planos if p.proxima_execucao and p.proxima_execucao < now]
+    proximos_7d = [p for p in planos if p.proxima_execucao and now <= p.proxima_execucao <= now + timedelta(days=7)]
+    executados = [p for p in planos if p.ultima_execucao]
+
+    compliance = round(len(executados) / total * 100, 1) if total else 0
+
+    rows = []
+    for p in sorted(planos, key=lambda x: (x.proxima_execucao or datetime.max.replace(tzinfo=timezone.utc))):
+        dias_atraso = None
+        if p.proxima_execucao and p.proxima_execucao < now:
+            dias_atraso = (now - p.proxima_execucao).days
+        rows.append({
+            "id": str(p.id),
+            "nome": p.nome,
+            "equipamento": eq_map.get(str(p.equipamento_id), "—"),
+            "frequencia_dias": p.frequencia_dias,
+            "ultima_execucao": p.ultima_execucao.isoformat() if p.ultima_execucao else None,
+            "proxima_execucao": p.proxima_execucao.isoformat() if p.proxima_execucao else None,
+            "status": "vencido" if dias_atraso is not None else ("proximo" if p in proximos_7d else "ok"),
+            "dias_atraso": dias_atraso,
+        })
+
+    return {
+        "total": total,
+        "compliance_percent": compliance,
+        "vencidos": len(vencidos),
+        "proximos_7d": len(proximos_7d),
+        "executados_alguma_vez": len(executados),
+        "planos": rows,
+    }
+
+
+@api_router.get("/relatorios/kpis")
+async def relatorio_kpis(
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "relatorios")
+    now = datetime.now(timezone.utc)
+    dt_inicio = datetime.fromisoformat(data_inicio).replace(tzinfo=timezone.utc) if data_inicio else now - timedelta(days=30)
+    dt_fim = datetime.fromisoformat(data_fim).replace(tzinfo=timezone.utc) if data_fim else now
+
+    os_list = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == user.organization_id,
+        OrdemServico.created_at >= dt_inicio,
+        OrdemServico.created_at <= dt_fim,
+        OrdemServico.tipo == TipoOS.CORRETIVA,
+        OrdemServico.status == StatusOS.FECHADA,
+    ).all()
+
+    tempos_reparo = [o.tempo_reparo for o in os_list if o.tempo_reparo]
+    mttr = round(sum(tempos_reparo) / len(tempos_reparo) / 60, 2) if tempos_reparo else 0.0
+
+    equips = {}
+    for o in os_list:
+        eid = str(o.equipamento_id)
+        equips.setdefault(eid, []).append(o)
+    mtbf_vals = []
+    disp_vals = []
+    for eid, os_eq in equips.items():
+        if len(os_eq) >= 2:
+            datas = sorted([o.created_at for o in os_eq])
+            span_h = (datas[-1] - datas[0]).total_seconds() / 3600
+            mtbf_vals.append(span_h / len(os_eq))
+            parada_h = sum((o.tempo_total or 0) for o in os_eq) / 60
+            disp_vals.append(max(0.0, (span_h - parada_h) / span_h * 100) if span_h else 100.0)
+
+    mtbf = round(sum(mtbf_vals) / len(mtbf_vals), 2) if mtbf_vals else 0.0
+    disponibilidade = round(sum(disp_vals) / len(disp_vals), 1) if disp_vals else 100.0
+
+    return {
+        "periodo": {"inicio": dt_inicio.isoformat(), "fim": dt_fim.isoformat()},
+        "mttr_horas": mttr,
+        "mtbf_horas": mtbf,
+        "disponibilidade_percent": disponibilidade,
+        "total_os_corretivas": len(os_list),
+        "total_equipamentos_com_falha": len(equips),
+    }
+
+
+@api_router.get("/relatorios/equipamentos")
+async def relatorio_equipamentos(
+    equipamento_id: Optional[str] = None,
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "relatorios")
+    now = datetime.now(timezone.utc)
+    dt_inicio = datetime.fromisoformat(data_inicio).replace(tzinfo=timezone.utc) if data_inicio else now - timedelta(days=90)
+    dt_fim = datetime.fromisoformat(data_fim).replace(tzinfo=timezone.utc) if data_fim else now
+
+    equips_q = db.query(Equipamento).filter(
+        Equipamento.organization_id == user.organization_id, Equipamento.ativo == True)
+    if equipamento_id:
+        equips_q = equips_q.filter(Equipamento.id == equipamento_id)
+    equips = equips_q.all()
+
+    resultado = []
+    for e in equips:
+        os_list = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == user.organization_id,
+            OrdemServico.equipamento_id == e.id,
+            OrdemServico.created_at >= dt_inicio,
+            OrdemServico.created_at <= dt_fim,
+        ).all()
+        corretivas = [o for o in os_list if o.tipo == TipoOS.CORRETIVA]
+        tempos = [o.tempo_reparo for o in corretivas if o.tempo_reparo]
+        mttr = round(sum(tempos) / len(tempos) / 60, 2) if tempos else None
+        resultado.append({
+            "id": str(e.id), "codigo": e.codigo, "nome": e.nome,
+            "localizacao": e.localizacao, "criticidade": e.criticidade,
+            "total_os": len(os_list),
+            "os_corretivas": len(corretivas),
+            "os_preventivas": len([o for o in os_list if o.tipo == TipoOS.PREVENTIVA]),
+            "mttr_horas": mttr,
+            "status_saude": getattr(e, "status_saude", "NORMAL"),
+            "disponibilidade_percent": getattr(e, "disponibilidade_percent", None),
+        })
+    return sorted(resultado, key=lambda x: x["os_corretivas"], reverse=True)
+
+
+# ========== MÓDULO PREDITIVO COMPLETO ==========
+
+class ConfigMonitoramentoCreate(BaseModel):
+    equipamento_id: str
+    parametro_nome: str
+    unidade: Optional[str] = None
+    threshold_atencao: float
+    threshold_critico: float
+    tendencia_janela_dias: int = 7
+
+class LeituraCreate(BaseModel):
+    equipamento_id: str
+    parametro_nome: str
+    valor: float
+    unidade: Optional[str] = None
+    fonte: str = "manual"
+    timestamp: Optional[datetime] = None
+
+class LeiturasBulk(BaseModel):
+    leituras: List[LeituraCreate]
+
+class AlertaIgnorar(BaseModel):
+    motivo: str
+
+
+@api_router.post("/preditivo/configuracoes", status_code=201)
+async def criar_config_monitoramento(
+    data: ConfigMonitoramentoCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.DEMO])
+    max_pred = limits.get("max_equipamentos_preditivo", 0)
+    if max_pred != -1:
+        atual = db.query(ConfiguracaoMonitoramento).filter(
+            ConfiguracaoMonitoramento.organization_id == user.organization_id,
+            ConfiguracaoMonitoramento.ativo == True,
+        ).distinct(ConfiguracaoMonitoramento.equipamento_id).count()
+        if atual >= max_pred:
+            raise HTTPException(status_code=402, detail={
+                "code": "limite_atingido",
+                "mensagem": f"Limite de {max_pred} equipamentos monitorados atingido no plano {limits.get('label')}.",
+                "upgrade_sugerido": sugerir_upgrade(org.plano, "max_equipamentos_preditivo"),
+                "url_upgrade": "/billing",
+            })
+    cfg = ConfiguracaoMonitoramento(
+        organization_id=user.organization_id,
+        equipamento_id=data.equipamento_id,
+        parametro_nome=data.parametro_nome,
+        unidade=data.unidade,
+        threshold_atencao=data.threshold_atencao,
+        threshold_critico=data.threshold_critico,
+        tendencia_janela_dias=data.tendencia_janela_dias,
+    )
+    db.add(cfg)
+    equip = db.query(Equipamento).filter(Equipamento.id == data.equipamento_id).first()
+    if equip:
+        equip.monitoramento_ativo = True
+    db.commit()
+    db.refresh(cfg)
+    return {"id": str(cfg.id), "mensagem": "Monitoramento configurado"}
+
+
+@api_router.get("/preditivo/configuracoes")
+async def listar_configs(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+    cfgs = db.query(ConfiguracaoMonitoramento).filter(
+        ConfiguracaoMonitoramento.organization_id == user.organization_id,
+    ).all()
+    equips = {str(e.id): e.nome for e in db.query(Equipamento).filter(
+        Equipamento.organization_id == user.organization_id).all()}
+    return [{"id": str(c.id), "equipamento_id": str(c.equipamento_id),
+             "equipamento_nome": equips.get(str(c.equipamento_id), ""),
+             "parametro_nome": c.parametro_nome, "unidade": c.unidade,
+             "threshold_atencao": c.threshold_atencao, "threshold_critico": c.threshold_critico,
+             "tendencia_janela_dias": c.tendencia_janela_dias, "ativo": c.ativo} for c in cfgs]
+
+
+@api_router.put("/preditivo/configuracoes/{cfg_id}")
+async def atualizar_config(
+    cfg_id: str, data: ConfigMonitoramentoCreate,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    cfg = db.query(ConfiguracaoMonitoramento).filter(
+        ConfiguracaoMonitoramento.id == cfg_id,
+        ConfiguracaoMonitoramento.organization_id == user.organization_id,
+    ).first()
+    if not cfg:
+        raise HTTPException(status_code=404, detail="Configuração não encontrada")
+    cfg.threshold_atencao = data.threshold_atencao
+    cfg.threshold_critico = data.threshold_critico
+    cfg.tendencia_janela_dias = data.tendencia_janela_dias
+    cfg.unidade = data.unidade
+    db.commit()
+    return {"mensagem": "Atualizado"}
+
+
+@api_router.post("/preditivo/leituras", status_code=201)
+async def registrar_leitura(
+    data: LeituraCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+    leitura = LeituraSensor(
+        organization_id=user.organization_id,
+        equipamento_id=data.equipamento_id,
+        parametro_nome=data.parametro_nome,
+        valor=data.valor,
+        unidade=data.unidade,
+        fonte=data.fonte,
+        registrado_por=user.id,
+        timestamp=data.timestamp or datetime.now(timezone.utc),
+    )
+    db.add(leitura)
+    db.commit()
+    db.refresh(leitura)
+    processar_leitura_preditiva(db, leitura)
+    return {"id": str(leitura.id), "processado": leitura.processado}
+
+
+@api_router.post("/preditivo/leituras/bulk", status_code=201)
+async def registrar_leituras_bulk(
+    data: LeiturasBulk,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+    criadas = 0
+    for item in data.leituras[:100]:  # limite de 100 por batch
+        leitura = LeituraSensor(
+            organization_id=user.organization_id,
+            equipamento_id=item.equipamento_id,
+            parametro_nome=item.parametro_nome,
+            valor=item.valor,
+            unidade=item.unidade,
+            fonte=item.fonte or "api_externa",
+            registrado_por=user.id,
+            timestamp=item.timestamp or datetime.now(timezone.utc),
+        )
+        db.add(leitura)
+        criadas += 1
+    db.commit()
+    return {"criadas": criadas, "mensagem": "Leituras agendadas para processamento"}
+
+
+@api_router.get("/preditivo/leituras/{equipamento_id}")
+async def historico_leituras(
+    equipamento_id: str,
+    parametro: Optional[str] = None,
+    dias: int = 30,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+    inicio = datetime.now(timezone.utc) - timedelta(days=dias)
+    q = db.query(LeituraSensor).filter(
+        LeituraSensor.organization_id == user.organization_id,
+        LeituraSensor.equipamento_id == equipamento_id,
+        LeituraSensor.timestamp >= inicio,
+    )
+    if parametro:
+        q = q.filter(LeituraSensor.parametro_nome == parametro)
+    rows = q.order_by(LeituraSensor.timestamp).limit(500).all()
+    return [{"id": str(r.id), "parametro_nome": r.parametro_nome, "valor": r.valor,
+             "unidade": r.unidade, "fonte": r.fonte,
+             "timestamp": r.timestamp.isoformat()} for r in rows]
+
+
+@api_router.get("/preditivo/alertas")
+async def listar_alertas(
+    severidade: Optional[str] = None,
+    status: Optional[str] = None,
+    equipamento_id: Optional[str] = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+    q = db.query(AlertaPreditivo).filter(AlertaPreditivo.organization_id == user.organization_id)
+    if severidade:
+        q = q.filter(AlertaPreditivo.severidade == severidade.upper())
+    if status:
+        q = q.filter(AlertaPreditivo.status == status.upper())
+    else:
+        q = q.filter(AlertaPreditivo.status == "ABERTO")
+    if equipamento_id:
+        q = q.filter(AlertaPreditivo.equipamento_id == equipamento_id)
+    alertas = q.order_by(AlertaPreditivo.criado_em.desc()).limit(100).all()
+    equips = {str(e.id): e.nome for e in db.query(Equipamento).filter(
+        Equipamento.organization_id == user.organization_id).all()}
+    return [{"id": str(a.id), "equipamento_id": str(a.equipamento_id),
+             "equipamento_nome": equips.get(str(a.equipamento_id), ""),
+             "parametro_nome": a.parametro_nome, "severidade": a.severidade,
+             "valor_atual": a.valor_atual, "threshold_violado": a.threshold_violado,
+             "tendencia": a.tendencia, "rul_estimado_dias": a.rul_estimado_dias,
+             "descricao": a.descricao, "status": a.status,
+             "criado_em": a.criado_em.isoformat()} for a in alertas]
+
+
+@api_router.post("/preditivo/alertas/{alerta_id}/gerar-os")
+async def gerar_os_alerta(
+    alerta_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    alerta = db.query(AlertaPreditivo).filter(
+        AlertaPreditivo.id == alerta_id,
+        AlertaPreditivo.organization_id == user.organization_id,
+    ).first()
+    if not alerta:
+        raise HTTPException(status_code=404, detail="Alerta não encontrado")
+    if alerta.status != "ABERTO":
+        raise HTTPException(status_code=400, detail="Alerta já tratado")
+    num = get_next_os_number(db, user.organization_id)
+    os_new = OrdemServico(
+        numero=num,
+        organization_id=user.organization_id,
+        equipamento_id=alerta.equipamento_id,
+        tipo=TipoOS.PREDITIVA,
+        prioridade=PrioridadeOS.CRITICA if alerta.severidade == "CRITICO" else PrioridadeOS.ALTA,
+        status=StatusOS.ABERTA,
+        descricao=alerta.descricao,
+        falha_tipo="preditivo",
+        solicitante_id=user.id,
+    )
+    db.add(os_new)
+    alerta.status = "OS_GERADA"
+    alerta.os_gerada_id = os_new.id
+    db.commit()
+    return {"os_numero": num, "mensagem": f"OS #{num} criada a partir do alerta"}
+
+
+@api_router.post("/preditivo/alertas/{alerta_id}/ignorar")
+async def ignorar_alerta(
+    alerta_id: str, data: AlertaIgnorar,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if len(data.motivo.strip()) < 10:
+        raise HTTPException(status_code=400, detail="Motivo deve ter pelo menos 10 caracteres")
+    alerta = db.query(AlertaPreditivo).filter(
+        AlertaPreditivo.id == alerta_id,
+        AlertaPreditivo.organization_id == user.organization_id,
+    ).first()
+    if not alerta:
+        raise HTTPException(status_code=404, detail="Alerta não encontrado")
+    alerta.status = "IGNORADO"
+    alerta.ignorado_por = user.id
+    alerta.motivo_ignorado = data.motivo
+    alerta.resolvido_em = datetime.now(timezone.utc)
+    db.commit()
+    return {"mensagem": "Alerta ignorado"}
+
+
+@api_router.get("/preditivo/dashboard")
+async def dashboard_preditivo(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+
+    equips = db.query(Equipamento).filter(
+        Equipamento.organization_id == user.organization_id,
+        Equipamento.monitoramento_ativo == True,
+    ).all()
+    total_mon = len(equips)
+    normal = sum(1 for e in equips if getattr(e, "status_saude", "NORMAL") == "NORMAL")
+    atencao = sum(1 for e in equips if getattr(e, "status_saude", "NORMAL") == "ATENCAO")
+    critico = sum(1 for e in equips if getattr(e, "status_saude", "NORMAL") == "CRITICO")
+
+    alertas_abertos = db.query(AlertaPreditivo).filter(
+        AlertaPreditivo.organization_id == user.organization_id,
+        AlertaPreditivo.status == "ABERTO",
+    ).all()
+    alertas_criticos = [a for a in alertas_abertos if a.severidade == "CRITICO"]
+
+    rul_vals = [e.rul_estimado_dias for e in equips if e.rul_estimado_dias is not None]
+    media_rul = round(sum(rul_vals) / len(rul_vals), 1) if rul_vals else None
+
+    menor_rul_equip = None
+    if equips:
+        candidatos = [(e, e.rul_estimado_dias) for e in equips if e.rul_estimado_dias is not None]
+        if candidatos:
+            e_min, rul_min = min(candidatos, key=lambda x: x[1])
+            menor_rul_equip = {"nome": e_min.nome, "rul_dias": rul_min}
+
+    # Histórico 30d de saúde (simplificado — conta alertas por dia)
+    inicio_30d = datetime.now(timezone.utc) - timedelta(days=30)
+    alertas_30d = db.query(AlertaPreditivo).filter(
+        AlertaPreditivo.organization_id == user.organization_id,
+        AlertaPreditivo.criado_em >= inicio_30d,
+    ).all()
+    hist = {}
+    for a in alertas_30d:
+        d = a.criado_em.strftime("%Y-%m-%d")
+        hist.setdefault(d, {"data": d, "atencao": 0, "critico": 0})
+        hist[d][a.severidade.lower()] += 1
+
+    top_risco = sorted(
+        [{"equipamento_id": str(e.id), "nome": e.nome,
+          "rul_dias": e.rul_estimado_dias,
+          "status_saude": getattr(e, "status_saude", "NORMAL"),
+          "custo_hora_parada": e.valor_hora}
+         for e in equips],
+        key=lambda x: (x["rul_dias"] or 9999),
+    )[:5]
+
+    return {
+        "total_equipamentos_monitorados": total_mon,
+        "equipamentos_normal": normal,
+        "equipamentos_atencao": atencao,
+        "equipamentos_critico": critico,
+        "alertas_abertos": len(alertas_abertos),
+        "alertas_criticos_abertos": len(alertas_criticos),
+        "media_rul_dias": media_rul,
+        "equipamento_menor_rul": menor_rul_equip,
+        "historico_saude_30d": sorted(hist.values(), key=lambda x: x["data"]),
+        "top_risco": top_risco,
+    }
+
+
+@api_router.get("/preditivo/saude-equipamentos")
+async def saude_equipamentos(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_preditivo")
+    equips = db.query(Equipamento).filter(
+        Equipamento.organization_id == user.organization_id,
+        Equipamento.ativo == True,
+    ).all()
+    alertas_abertos = {
+        str(a.equipamento_id): a for a in db.query(AlertaPreditivo).filter(
+            AlertaPreditivo.organization_id == user.organization_id,
+            AlertaPreditivo.status == "ABERTO",
+        ).all()
+    }
+    return [{"id": str(e.id), "nome": e.nome, "codigo": e.codigo,
+             "localizacao": e.localizacao,
+             "monitoramento_ativo": getattr(e, "monitoramento_ativo", False),
+             "status_saude": getattr(e, "status_saude", "NORMAL"),
+             "rul_estimado_dias": getattr(e, "rul_estimado_dias", None),
+             "mttr_horas": getattr(e, "mttr_horas", None),
+             "mtbf_horas": getattr(e, "mtbf_horas", None),
+             "disponibilidade_percent": getattr(e, "disponibilidade_percent", None),
+             "alerta_ativo": str(e.id) in alertas_abertos,
+             "alerta_severidade": alertas_abertos[str(e.id)].severidade if str(e.id) in alertas_abertos else None,
+             "valor_hora": e.valor_hora} for e in equips]
+
+
+# ========== DASHBOARD AVANÇADO ==========
+
+@api_router.get("/dashboard/tendencia")
+async def get_tendencia(
+    dias: int = 30,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retorna série temporal de OS abertas nos últimos N dias (dashboard avançado)."""
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "dashboard_avancado")
+
+    now = datetime.now(timezone.utc)
+    from sqlalchemy import func, cast, Date as SADate
+
+    result = []
+    for i in range(dias - 1, -1, -1):
+        day_start = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        total = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == user.organization_id,
+            OrdemServico.created_at >= day_start,
+            OrdemServico.created_at < day_end,
+        ).count()
+        corretivas = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == user.organization_id,
+            OrdemServico.created_at >= day_start,
+            OrdemServico.created_at < day_end,
+            OrdemServico.tipo == TipoOS.CORRETIVA,
+        ).count()
+        fechadas = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == user.organization_id,
+            OrdemServico.created_at >= day_start,
+            OrdemServico.created_at < day_end,
+            OrdemServico.status == StatusOS.FECHADA,
+        ).count()
+        result.append({
+            "data": day_start.strftime("%d/%m"),
+            "total": total,
+            "corretivas": corretivas,
+            "fechadas": fechadas,
+        })
+
+    return {"dias": dias, "serie": result}
+
+
+# ========== KANBAN ==========
+
+@api_router.get("/kanban")
+async def get_kanban(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retorna OS agrupadas por status para o board Kanban."""
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "kanban")
+
+    ordens = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == user.organization_id,
+        OrdemServico.status != StatusOS.FECHADA,
+    ).order_by(OrdemServico.created_at.desc()).all()
+
+    eq_map = {str(e.id): e.nome for e in db.query(Equipamento).filter(Equipamento.organization_id == user.organization_id).all()}
+    user_map = {str(u.id): u.nome for u in db.query(User).filter(User.organization_id == user.organization_id).all()}
+
+    columns = {s.value: [] for s in [StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_REVISAO, StatusOS.REVISADA]}
+
+    for o in ordens:
+        col = o.status.value
+        if col not in columns:
+            continue
+        columns[col].append({
+            "id": str(o.id),
+            "numero": o.numero,
+            "equipamento": eq_map.get(str(o.equipamento_id), "—"),
+            "tipo": o.tipo.value,
+            "prioridade": o.prioridade.value,
+            "tecnico": user_map.get(str(o.tecnico_id), None) if o.tecnico_id else None,
+            "descricao": (o.descricao or "")[:80],
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+            "dentro_sla": o.dentro_sla,
+            "reincidente": o.reincidente,
+            "tempo_resposta": o.tempo_resposta,
+        })
+
+    return {
+        "columns": [
+            {"id": "aberta",              "label": "Aberta",           "cards": columns["aberta"]},
+            {"id": "em_atendimento",      "label": "Em Atendimento",   "cards": columns["em_atendimento"]},
+            {"id": "aguardando_revisao",  "label": "Ag. Revisão",      "cards": columns["aguardando_revisao"]},
+            {"id": "revisada",            "label": "Revisada",         "cards": columns["revisada"]},
+        ]
+    }
+
+
 # ========== SEED DATA ==========
 @api_router.post("/seed-demo")
 async def seed_demo_data(db: Session = Depends(get_db)):
@@ -2098,16 +4081,16 @@ async def seed_demo_data(db: Session = Depends(get_db)):
     # Check if demo org exists
     demo_org = db.query(Organization).filter(Organization.nome == "Empresa Demo").first()
     if demo_org:
-        return {"message": "Dados de demonstração já existem", "email": "admin@demo.pcm"}
-    
-    # Create organization
+        return {"message": "Dados de demonstração já existem", "email": "admin@demo.aurix"}
+
+    # Create organization with plano Profissional para demonstração completa
     org = Organization(
         nome="Empresa Demo",
         cnpj="00.000.000/0001-00",
-        plano=PlanoSaaS.PRO,
-        limite_equipamentos=100,
-        limite_usuarios=50,
-        limite_os_mes=500
+        plano=PlanoSaaS.PROFISSIONAL,
+        limite_equipamentos=35,
+        limite_usuarios=45,
+        limite_os_mes=-1,
     )
     db.add(org)
     db.commit()
@@ -2115,32 +4098,36 @@ async def seed_demo_data(db: Session = Depends(get_db)):
     
     # Create users
     admin = User(
-        email="admin@demo.pcm",
+        email="admin@demo.aurix",
         password_hash=hash_password("admin123"),
         nome="Administrador Demo",
         role=UserRole.ADMIN,
-        organization_id=org.id
+        organization_id=org.id,
     )
     lider = User(
-        email="lider@demo.pcm",
+        email="lider@demo.aurix",
         password_hash=hash_password("lider123"),
         nome="Líder Técnico",
         role=UserRole.LIDER,
-        organization_id=org.id
+        organization_id=org.id,
+        setor="MECANICA",
+        is_lider=True,
     )
     tecnico = User(
-        email="tecnico@demo.pcm",
+        email="tecnico@demo.aurix",
         password_hash=hash_password("tecnico123"),
         nome="Técnico Manutenção",
         role=UserRole.TECNICO,
-        organization_id=org.id
+        organization_id=org.id,
+        setor="MECANICA",
     )
     operador = User(
-        email="operador@demo.pcm",
+        email="operador@demo.aurix",
         password_hash=hash_password("operador123"),
         nome="Operador Produção",
         role=UserRole.OPERADOR,
-        organization_id=org.id
+        organization_id=org.id,
+        setor="ELETRICA",
     )
     db.add_all([admin, lider, tecnico, operador])
     db.commit()
@@ -2304,14 +4291,37 @@ app.include_router(api_router)
 
 @app.get("/")
 async def root():
-    return {"message": "PCM - Sistema de Gestão de Manutenção Industrial", "version": "1.0.0"}
+    return {"message": "AURIX — Tecnologia para a Gestão Industrial", "version": "3.0.0"}
+
+_scheduler = None
 
 @app.on_event("startup")
 async def startup():
-    logger.info("Starting PCM application...")
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created/verified")
+    global _scheduler
+    logger.info("Starting AURIX application...")
+    try:
+        ensure_database_schema()
+    except HTTPException as exc:
+        logger.warning("Application started without database connectivity: %s", exc.detail)
+
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        _scheduler = BackgroundScheduler(timezone="America/Sao_Paulo")
+        _scheduler.add_job(lambda: _run_job(_job_processar_leituras),      "interval", minutes=15,  id="proc_leituras")
+        _scheduler.add_job(lambda: _run_job(_job_auto_aprovar_sla),         "interval", minutes=30,  id="auto_aprovar")
+        _scheduler.add_job(lambda: _run_job(_job_gerar_os_preventivas),     "cron",     hour=7, minute=0, id="os_preventivas")
+        _scheduler.add_job(lambda: _run_job(_job_atualizar_mttr_mtbf),      "cron",     hour=0, minute=0, id="mttr_mtbf")
+        _scheduler.start()
+        logger.info("APScheduler iniciado com 4 jobs")
+    except ImportError:
+        logger.warning("APScheduler não disponível — jobs em background desabilitados")
+    except Exception as exc:
+        logger.warning("APScheduler falhou ao iniciar: %s", exc)
+
 
 @app.on_event("shutdown")
 async def shutdown():
-    logger.info("Shutting down PCM application...")
+    global _scheduler
+    if _scheduler:
+        _scheduler.shutdown(wait=False)
+    logger.info("Shutting down AURIX application...")

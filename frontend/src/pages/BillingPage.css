@@ -1,0 +1,770 @@
+/* ═══════════════════════════════════════════════════════
+   AURIX — BILLING PAGE  ·  Dark Industrial Design System
+   ═══════════════════════════════════════════════════════ */
+
+/* ── CSS Variables ──────────────────────────────────────── */
+:root {
+  --aurix-bg-primary:    #050A14;
+  --aurix-bg-surface:    #0D1626;
+  --aurix-bg-card:       #111D30;
+  --aurix-bg-elevated:   #162038;
+
+  --aurix-blue-primary:  #1A6FE8;
+  --aurix-blue-bright:   #2E90FA;
+  --aurix-blue-glow:     rgba(26, 111, 232, 0.12);
+  --aurix-blue-glow-md:  rgba(46, 144, 250, 0.25);
+
+  --aurix-text-primary:  #F0F6FF;
+  --aurix-text-secondary:#8DA4C4;
+  --aurix-text-muted:    #4A6280;
+
+  --aurix-border:        #1E3054;
+  --aurix-border-bright: #2E90FA;
+  --aurix-border-glow:   rgba(26, 111, 232, 0.25);
+
+  --aurix-success:       #22C55E;
+  --aurix-warning:       #F59E0B;
+  --aurix-danger:        #EF4444;
+}
+
+/* ── Page shell ──────────────────────────────────────────── */
+.billing-page {
+  position: relative;
+  min-height: 100vh;
+  background: var(--aurix-bg-primary);
+  color: var(--aurix-text-primary);
+  font-family: "Inter", sans-serif;
+}
+
+.billing-bg {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 40% at 50% -10%, rgba(26, 111, 232, 0.18) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 30% at 80% 80%, rgba(26, 111, 232, 0.08) 0%, transparent 60%);
+  z-index: 0;
+}
+
+.billing-shell {
+  position: relative;
+  z-index: 1;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+}
+
+/* ── Hero ────────────────────────────────────────────────── */
+.billing-hero {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.billing-hero__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--aurix-text-secondary);
+  letter-spacing: 0.04em;
+}
+
+.billing-hero__brand {
+  font-family: "Outfit", sans-serif;
+  font-weight: 700;
+  font-size: clamp(2.5rem, 6vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.billing-hero__brand-text {
+  color: var(--aurix-text-primary);
+}
+
+.billing-hero__brand-accent {
+  background: linear-gradient(135deg, #1A6FE8, #2E90FA);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.billing-hero__tagline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: "Outfit", sans-serif;
+  font-size: clamp(1rem, 2.5vw, 1.375rem);
+  font-weight: 600;
+  color: var(--aurix-text-secondary);
+  text-align: center;
+}
+
+.billing-hero__highlight {
+  color: var(--aurix-blue-bright);
+  font-weight: 700;
+}
+
+/* ── Usage card ──────────────────────────────────────────── */
+.billing-usage-card {
+  background: var(--aurix-bg-surface);
+  border: 1px solid var(--aurix-border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.billing-usage-card__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: "Outfit", sans-serif;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--aurix-text-primary);
+}
+
+.billing-usage-card__title svg {
+  color: var(--aurix-blue-bright);
+}
+
+.billing-usage-card__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.usage-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.usage-item__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.usage-item__label {
+  color: var(--aurix-text-secondary);
+  font-weight: 500;
+}
+
+.usage-item__value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--aurix-text-primary);
+  font-weight: 600;
+}
+
+.usage-item__badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.06em;
+}
+
+.usage-item__badge--warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--aurix-warning);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.usage-item__badge--danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--aurix-danger);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.usage-bar-track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+
+.usage-bar-fill--ok      { background: var(--aurix-success); }
+.usage-bar-fill--warning { background: var(--aurix-warning); }
+.usage-bar-fill--danger  { background: var(--aurix-danger); }
+
+/* ── Plans section ───────────────────────────────────────── */
+.billing-plans-section__head {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.billing-plans-section__title {
+  font-family: "Outfit", sans-serif;
+  font-size: clamp(1.25rem, 3vw, 1.75rem);
+  font-weight: 700;
+  color: var(--aurix-text-primary);
+  margin-bottom: 10px;
+}
+
+.billing-plans-section__sub {
+  font-size: 14px;
+  color: var(--aurix-text-secondary);
+  max-width: 560px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+/* ── Pricing grid ────────────────────────────────────────── */
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1200px) {
+  .pricing-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .pricing-grid {
+    grid-template-columns: 1fr;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+}
+
+/* ── Pricing card ────────────────────────────────────────── */
+.pricing-card {
+  position: relative;
+  background: var(--aurix-bg-surface);
+  border: 1px solid var(--aurix-border);
+  border-radius: 12px;
+  padding: 28px 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.pricing-card:hover {
+  border-color: rgba(46, 144, 250, 0.4);
+  box-shadow: 0 0 20px var(--aurix-blue-glow);
+}
+
+/* ── Card destaque — MAIS POPULAR ──── */
+.pricing-card--popular {
+  background: var(--aurix-bg-elevated);
+  border: 2px solid var(--aurix-blue-bright);
+  box-shadow: 0 0 40px var(--aurix-blue-glow-md);
+  padding-top: 42px;
+}
+
+.pricing-card--popular:hover {
+  box-shadow: 0 0 50px rgba(46, 144, 250, 0.35);
+}
+
+/* ── Card plano atual ──── */
+.pricing-card--current {
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+/* ── Badge MAIS POPULAR ──── */
+.pricing-badge {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--aurix-blue-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 16px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* ── Card header ──── */
+.pricing-card__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pricing-card__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--aurix-blue-glow);
+  color: var(--aurix-blue-bright);
+  flex-shrink: 0;
+}
+
+.pricing-card__name {
+  font-family: "Outfit", sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--aurix-text-primary);
+  line-height: 1.2;
+}
+
+.pricing-card__subtitle {
+  font-size: 12px;
+  color: var(--aurix-text-secondary);
+  margin-top: 2px;
+}
+
+/* ── Price ──── */
+.pricing-card__price {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.pricing-card__price-free {
+  font-family: "Outfit", sans-serif;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--aurix-text-primary);
+}
+
+.pricing-card__price-currency {
+  font-size: 1rem;
+  font-weight: 400;
+  color: var(--aurix-text-secondary);
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.pricing-card__price-value {
+  font-family: "Outfit", sans-serif;
+  font-size: 2.75rem;
+  font-weight: 700;
+  color: var(--aurix-text-primary);
+  line-height: 1;
+}
+
+.pricing-card__price-period {
+  font-size: 13px;
+  color: var(--aurix-text-muted);
+  margin-left: 2px;
+}
+
+/* ── Features list ──── */
+.pricing-card__features {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.pricing-feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--aurix-text-secondary);
+  line-height: 1.4;
+}
+
+.pricing-feature-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.pricing-feature-icon--check {
+  color: var(--aurix-success);
+}
+
+.pricing-feature-icon--x {
+  color: var(--aurix-text-muted);
+}
+
+.pricing-feature-text--excluded {
+  color: var(--aurix-text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--aurix-text-muted);
+}
+
+/* ── CTA button ──── */
+.pricing-card__cta {
+  width: 100%;
+  height: 48px;
+  border-radius: 8px;
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.pricing-card__cta--primary {
+  background: var(--aurix-blue-primary);
+  color: #fff;
+}
+
+.pricing-card__cta--primary:hover:not(:disabled) {
+  background: var(--aurix-blue-bright);
+}
+
+.pricing-card__cta--outline {
+  background: transparent;
+  border: 1px solid var(--aurix-border-bright);
+  color: var(--aurix-text-primary);
+}
+
+.pricing-card__cta--outline:hover:not(:disabled) {
+  background: var(--aurix-blue-glow);
+}
+
+.pricing-card__cta--current {
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  color: var(--aurix-success);
+  cursor: default;
+}
+
+.pricing-card__cta:disabled:not(.pricing-card__cta--current) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Trust bar ───────────────────────────────────────────── */
+.billing-trust {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  padding: 32px 0;
+  border-top: 1px solid var(--aurix-border);
+  border-bottom: 1px solid var(--aurix-border);
+}
+
+@media (max-width: 900px) {
+  .billing-trust { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .billing-trust { grid-template-columns: 1fr; }
+}
+
+.billing-trust__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.billing-trust__icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--aurix-blue-glow);
+  color: var(--aurix-blue-bright);
+}
+
+.billing-trust__title {
+  font-family: "Outfit", sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--aurix-text-primary);
+  margin-bottom: 4px;
+}
+
+.billing-trust__desc {
+  font-size: 12px;
+  color: var(--aurix-text-secondary);
+  line-height: 1.5;
+}
+
+/* ── Manage Subscription ─────────────────────────────────── */
+.billing-manage-section {
+  background: var(--aurix-bg-surface);
+  border: 1px solid var(--aurix-border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.billing-manage-section__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--aurix-text-primary);
+}
+
+.billing-manage-section__title svg {
+  color: var(--aurix-blue-bright);
+}
+
+.billing-manage-section__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.billing-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.billing-manage-btn--danger {
+  color: #EF4444 !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+}
+
+.billing-manage-btn--danger:hover {
+  background: rgba(239, 68, 68, 0.1) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+/* ── Transactions ────────────────────────────────────────── */
+.billing-transactions {
+  background: var(--aurix-bg-surface);
+  border: 1px solid var(--aurix-border);
+  border-radius: 12px;
+  padding: 24px 28px;
+}
+
+.billing-transactions__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 20px;
+  color: var(--aurix-blue-bright);
+}
+
+.billing-transactions__header svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.billing-transactions__header h3 {
+  font-family: "Outfit", sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--aurix-text-primary);
+}
+
+.billing-transactions__header p {
+  font-size: 12px;
+  color: var(--aurix-text-secondary);
+  margin-top: 2px;
+}
+
+.billing-transactions__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.billing-transactions__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--aurix-bg-card);
+  border: 1px solid var(--aurix-border);
+  border-radius: 8px;
+}
+
+.billing-transactions__item-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.billing-transactions__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.billing-transactions__dot--paid    { background: var(--aurix-success); }
+.billing-transactions__dot--pending { background: var(--aurix-warning); }
+
+.billing-transactions__plan {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--aurix-text-primary);
+}
+
+.billing-transactions__date {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--aurix-text-muted);
+  margin-top: 3px;
+}
+
+.billing-transactions__item-right {
+  text-align: right;
+}
+
+.billing-transactions__amount {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--aurix-text-primary);
+}
+
+.billing-transactions__status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
+  display: inline-block;
+}
+
+.billing-transactions__status--paid {
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--aurix-success);
+}
+
+.billing-transactions__status--pending {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--aurix-warning);
+}
+
+/* ── Enterprise modal ────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 10, 20, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal-box {
+  background: var(--aurix-bg-surface);
+  border: 1px solid var(--aurix-border-bright);
+  border-radius: 16px;
+  padding: 36px 32px;
+  max-width: 460px;
+  width: 100%;
+  box-shadow: 0 0 60px rgba(46, 144, 250, 0.2);
+}
+
+.modal-box__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.modal-box__icon {
+  color: var(--aurix-blue-bright);
+}
+
+.modal-box__header h2 {
+  font-family: "Outfit", sans-serif;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--aurix-text-primary);
+}
+
+.modal-box__body {
+  font-size: 14px;
+  color: var(--aurix-text-secondary);
+  line-height: 1.65;
+  margin-bottom: 28px;
+}
+
+.modal-box__actions {
+  display: flex;
+  gap: 12px;
+}
+
+/* ── Shared buttons ──────────────────────────────────────── */
+.btn-primary {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  background: var(--aurix-blue-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn-primary:hover {
+  background: var(--aurix-blue-bright);
+}
+
+.btn-outline {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  background: transparent;
+  color: var(--aurix-text-primary);
+  border: 1px solid var(--aurix-border-bright);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn-outline:hover {
+  background: var(--aurix-blue-glow);
+}

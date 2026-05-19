@@ -1,5 +1,5 @@
 """
-SQLAlchemy ORM Models for the PCM SaaS platform.
+SQLAlchemy ORM Models for the AURIX SaaS platform.
 All models enforce multi-tenancy via organization_id foreign key.
 """
 import uuid
@@ -27,10 +27,10 @@ class Organization(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nome = Column(String(255), nullable=False)
     cnpj = Column(String(20), unique=True, nullable=True)
-    plano = Column(SQLEnum(PlanoSaaS), default=PlanoSaaS.FREE)
-    limite_equipamentos = Column(Integer, default=10)
-    limite_usuarios = Column(Integer, default=5)
-    limite_os_mes = Column(Integer, default=50)
+    plano = Column(SQLEnum(PlanoSaaS), default=PlanoSaaS.DEMO)
+    limite_equipamentos = Column(Integer, default=5)
+    limite_usuarios = Column(Integer, default=3)
+    limite_os_mes = Column(Integer, default=10)
     ativo = Column(Boolean, default=True)
     stripe_customer_id = Column(String(255), nullable=True)
     stripe_subscription_id = Column(String(255), nullable=True)

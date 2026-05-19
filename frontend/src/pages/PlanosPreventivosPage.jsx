@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { getPlanosPreventivos, createPlanoPreventivo, executarPlano, getEquipamentos } from "../lib/api";
+import { useAuth } from "../contexts/AuthContext";
+import { useNavigate } from "react-router-dom";
+import { Lock } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
-import { useAuth } from "../contexts/AuthContext";
 import {
   Plus,
   Calendar,
@@ -33,9 +35,11 @@ const frequencyLabels = {
 
 export default function PlanosPreventivosPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [planos, setPlanos] = useState([]);
   const [equipamentos, setEquipamentos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [locked, setLocked] = useState(user?.features?.planos_preventivos === false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [executing, setExecuting] = useState(null);
   const [formData, setFormData] = useState({
@@ -51,7 +55,8 @@ export default function PlanosPreventivosPage() {
       setPlanos(planosRes.data);
       setEquipamentos(eqRes.data);
     } catch (error) {
-      toast.error("Erro ao carregar planos preventivos");
+      if (error.response?.status === 403) { setLocked(true); }
+      else toast.error("Erro ao carregar planos preventivos");
     } finally {
       setLoading(false);
     }
@@ -109,6 +114,25 @@ export default function PlanosPreventivosPage() {
     const dias = diasParaVencer(p.proxima_execucao);
     return dias !== null && dias >= 0 && dias <= 7;
   }).length;
+
+  if (locked) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh] gap-5 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+          <Lock className="h-7 w-7 text-primary" />
+        </div>
+        <div className="max-w-sm space-y-1.5">
+          <h2 className="font-heading text-xl font-bold">Manutenção Preventiva</h2>
+          <p className="text-muted-foreground text-sm">
+            Planos preventivos estão disponíveis a partir do plano <strong className="text-foreground">Profissional</strong>.
+          </p>
+        </div>
+        <Button onClick={() => navigate("/billing")} className="rounded-lg shadow-lg shadow-primary/20">
+          Ver planos
+        </Button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

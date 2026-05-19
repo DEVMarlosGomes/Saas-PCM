@@ -1,145 +1,305 @@
 import { useState, useEffect, useCallback } from "react";
+import "./BillingPage.css";
 import { useAuth } from "../contexts/AuthContext";
-import { getBillingPlan, createBillingCheckout, getCheckoutStatus, getBillingTransactions } from "../lib/api";
-import { Button } from "../components/ui/button";
+import { getBillingPlan, getBillingTransactions, createBillingCheckout, getBillingPortal, cancelarAssinatura } from "../lib/api";
 import { toast } from "sonner";
-import { useSearchParams } from "react-router-dom";
 import {
-  CreditCard,
-  Zap,
-  Crown,
+  BarChart3,
   Building2,
-  CheckCircle2,
-  ArrowRight,
-  Loader2,
-  Shield,
-  Star,
-  Receipt,
+  Check,
   Clock,
+  Crown,
   ExternalLink,
+  Headphones,
+  Loader2,
+  Play,
+  Receipt,
+  Settings2,
+  Shield,
+  ShieldCheck,
+  Sparkles,
+  TrendingUp,
+  X,
+  XCircle,
+  Zap,
 } from "lucide-react";
 
-const planIcons = {
-  free: Shield,
-  pro: Zap,
-  enterprise: Crown,
-};
+// ─── Planos AURIX ────────────────────────────────────────────────────────────
 
-const planColors = {
-  free: {
-    border: "border-border/50",
-    badge: "plan-free",
-    button: "bg-muted text-foreground hover:bg-muted/80",
-    glow: "",
+const PLANS = [
+  {
+    key: "demo",
+    name: "Demo",
+    subtitle: "Experimente a Aurix",
+    price: null,
+    priceLabel: "GRÁTIS",
+    icon: Play,
+    ctaTipo: "trial",
+    ctaTexto: "EXPERIMENTAR GRÁTIS",
+    destaque: false,
+    features: [
+      { text: "Até 3 colaboradores", included: true },
+      { text: "Até 5 equipamentos", included: true },
+      { text: "10 dias de teste", included: true },
+      { text: "Análise de relatórios", included: false },
+      { text: "Módulo preditivo", included: false },
+      { text: "Planos preventivos", included: false },
+    ],
   },
-  pro: {
-    border: "border-blue-500/30",
-    badge: "plan-pro",
-    button: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20",
-    glow: "ring-1 ring-blue-500/20",
+  {
+    key: "essencial",
+    name: "Essencial",
+    subtitle: "Comece com eficiência",
+    price: 250,
+    icon: Settings2,
+    ctaTipo: "stripe_checkout",
+    ctaTexto: "ASSINAR PLANO",
+    destaque: false,
+    features: [
+      { text: "Até 10 colaboradores", included: true },
+      { text: "Até 20 equipamentos", included: true },
+      { text: "Análise de indicadores", included: true },
+      { text: "Suporte por e-mail", included: true },
+      { text: "Módulo preditivo", included: false },
+      { text: "WhatsApp integrado", included: false },
+    ],
   },
-  enterprise: {
-    border: "border-amber-500/30",
-    badge: "plan-enterprise",
-    button: "bg-gradient-to-r from-amber-500 to-purple-500 text-white hover:opacity-90 shadow-lg",
-    glow: "ring-1 ring-amber-500/20",
+  {
+    key: "profissional",
+    name: "Profissional",
+    subtitle: "Escala com inteligência",
+    price: 490,
+    icon: Crown,
+    ctaTipo: "stripe_checkout",
+    ctaTexto: "ASSINAR PLANO",
+    destaque: true,
+    features: [
+      { text: "Até 45 colaboradores", included: true },
+      { text: "Até 35 equipamentos", included: true },
+      { text: "Setores independentes", included: true },
+      { text: "Dashboards e Kanban", included: true },
+      { text: "Módulo preditivo (10 equip.)", included: true },
+      { text: "Suporte prioritário", included: true },
+    ],
   },
-};
+  {
+    key: "avancado",
+    name: "Avançado",
+    subtitle: "Gestão que gera resultado",
+    price: 790,
+    icon: TrendingUp,
+    ctaTipo: "stripe_checkout",
+    ctaTexto: "ASSINAR PLANO",
+    destaque: false,
+    features: [
+      { text: "Até 100 colaboradores", included: true },
+      { text: "Até 50 equipamentos", included: true },
+      { text: "Dashboards avançados", included: true },
+      { text: "Relatórios personalizados", included: true },
+      { text: "Módulo preditivo (30 equip.)", included: true },
+      { text: "WhatsApp integrado", included: true },
+    ],
+  },
+  {
+    key: "enterprise",
+    name: "Enterprise",
+    subtitle: "Solução sem limites",
+    price: 1290,
+    icon: Building2,
+    ctaTipo: "contato",
+    ctaTexto: "FALE CONOSCO",
+    destaque: false,
+    features: [
+      { text: "Colaboradores ilimitados", included: true },
+      { text: "Equipamentos ilimitados", included: true },
+      { text: "Todas funcionalidades", included: true },
+      { text: "Integrações avançadas (SCADA/ERP)", included: true },
+      { text: "SSO (SAML 2.0)", included: true },
+      { text: "Suporte dedicado + SLA", included: true },
+    ],
+  },
+];
 
-function PlanCard({ plan, planKey, currentPlan, isRecommended, onUpgrade, upgrading }) {
-  const Icon = planIcons[planKey] || Shield;
-  const colors = planColors[planKey] || planColors.free;
-  const isCurrent = currentPlan === planKey;
-  const isDowngrade = (currentPlan === "enterprise" && planKey !== "enterprise") ||
-                      (currentPlan === "pro" && planKey === "free");
+const TRUST_ITEMS = [
+  {
+    icon: ShieldCheck,
+    title: "Segurança",
+    desc: "Seus dados protegidos com criptografia avançada.",
+  },
+  {
+    icon: Zap,
+    title: "Performance",
+    desc: "Plataforma escalável para alto desempenho industrial.",
+  },
+  {
+    icon: Settings2,
+    title: "Integração",
+    desc: "Conecte máquinas, sistemas e pessoas.",
+  },
+  {
+    icon: Headphones,
+    title: "Suporte Especializado",
+    desc: "Time técnico preparado para sua operação.",
+  },
+];
+
+// ─── Componentes ─────────────────────────────────────────────────────────────
+
+function PricingBadge() {
+  return (
+    <div className="pricing-badge" data-testid="popular-badge">
+      MAIS POPULAR
+    </div>
+  );
+}
+
+function PricingFeatureItem({ text, included }) {
+  return (
+    <li className="pricing-feature-item">
+      {included ? (
+        <Check className="pricing-feature-icon pricing-feature-icon--check" size={16} />
+      ) : (
+        <X className="pricing-feature-icon pricing-feature-icon--x" size={14} />
+      )}
+      <span className={included ? "" : "pricing-feature-text--excluded"}>{text}</span>
+    </li>
+  );
+}
+
+function PricingCard({ plan, currentPlan, onSelect, loading }) {
+  const isCurrent = currentPlan === plan.key;
+  const Icon = plan.icon;
+  const isLoading = loading === plan.key;
 
   return (
-    <div className={`relative border rounded-xl bg-card p-6 flex flex-col card-hover ${colors.border} ${isRecommended ? colors.glow : ''}`}>
-      {isRecommended && (
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-          <span className="inline-flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full shadow-lg shadow-primary/20">
-            <Star className="h-3 w-3" />
-            Recomendado
-          </span>
-        </div>
-      )}
+    <article
+      className={`pricing-card ${plan.destaque ? "pricing-card--popular" : ""} ${isCurrent ? "pricing-card--current" : ""}`}
+      data-testid={`pricing-card-${plan.key}`}
+    >
+      {plan.destaque && <PricingBadge />}
 
-      <div className="flex items-center gap-3 mb-4">
-        <div className={`p-2.5 rounded-xl ${planKey === 'free' ? 'bg-muted' : planKey === 'pro' ? 'bg-blue-500/10' : 'bg-amber-500/10'}`}>
-          <Icon className={`h-5 w-5 ${planKey === 'free' ? 'text-muted-foreground' : planKey === 'pro' ? 'text-blue-500' : 'text-amber-500'}`} />
+      <div className="pricing-card__header">
+        <div className="pricing-card__icon" data-testid={`pricing-icon-${plan.key}`}>
+          <Icon size={22} />
         </div>
         <div>
-          <h3 className="font-heading font-bold text-lg">{plan.label}</h3>
-          {isCurrent && (
-            <span className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wider">Seu plano atual</span>
-          )}
+          <h3 className="pricing-card__name">{plan.name}</h3>
+          <p className="pricing-card__subtitle">{plan.subtitle}</p>
         </div>
       </div>
 
-      <div className="mb-6">
-        <div className="flex items-baseline gap-1">
-          <span className="text-4xl font-bold font-heading">
-            {plan.price === 0 ? "Grátis" : `$${plan.price}`}
-          </span>
-          {plan.price > 0 && <span className="text-sm text-muted-foreground">/mês</span>}
-        </div>
-      </div>
-
-      <div className="space-y-3 flex-1 mb-6">
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Inclui:</p>
-        <div className="space-y-2.5">
-          <FeatureItem text={`${plan.max_equipamentos >= 9999 ? 'Ilimitados' : plan.max_equipamentos} equipamentos`} />
-          <FeatureItem text={`${plan.max_users >= 999 ? 'Ilimitados' : plan.max_users} usuários`} />
-          <FeatureItem text={`${plan.max_os_mes >= 9999 ? 'Ilimitadas' : plan.max_os_mes} OS/mês`} />
-          {planKey === "pro" && <FeatureItem text="Planos preventivos" />}
-          {planKey === "pro" && <FeatureItem text="Suporte prioritário" />}
-          {planKey === "enterprise" && <FeatureItem text="API de integração" />}
-          {planKey === "enterprise" && <FeatureItem text="Suporte 24/7 dedicado" />}
-          {planKey === "enterprise" && <FeatureItem text="SLA garantido" />}
-        </div>
-      </div>
-
-      <Button
-        className={`w-full h-11 rounded-lg font-semibold transition-all ${colors.button}`}
-        disabled={isCurrent || isDowngrade || upgrading}
-        onClick={() => onUpgrade(planKey)}
-      >
-        {upgrading ? (
-          <Loader2 className="h-4 w-4 animate-spin mr-2" />
-        ) : isCurrent ? (
-          <span className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4" />
-            Plano Atual
-          </span>
-        ) : isDowngrade ? (
-          "Não disponível"
+      <div className="pricing-card__price">
+        {plan.price === null ? (
+          <span className="pricing-card__price-free">{plan.priceLabel}</span>
         ) : (
-          <span className="flex items-center gap-2">
-            Fazer Upgrade
-            <ArrowRight className="h-4 w-4" />
-          </span>
+          <>
+            <span className="pricing-card__price-currency">R$</span>
+            <span className="pricing-card__price-value">{plan.price.toLocaleString("pt-BR")}</span>
+            <span className="pricing-card__price-period">/mês</span>
+          </>
         )}
-      </Button>
+      </div>
+
+      <ul className="pricing-card__features">
+        {plan.features.map((f) => (
+          <PricingFeatureItem key={f.text} text={f.text} included={f.included} />
+        ))}
+      </ul>
+
+      <button
+        className={`pricing-card__cta ${plan.destaque ? "pricing-card__cta--primary" : "pricing-card__cta--outline"} ${isCurrent ? "pricing-card__cta--current" : ""}`}
+        disabled={isCurrent || isLoading}
+        onClick={() => onSelect(plan)}
+        data-testid={`btn-${plan.key === "enterprise" ? "fale-conosco" : plan.key === "demo" ? "experimentar-gratis" : "assinar-plano"}-${plan.key}`}
+      >
+        {isLoading ? (
+          <Loader2 size={16} className="animate-spin" />
+        ) : isCurrent ? (
+          <>
+            <Check size={16} />
+            Plano atual
+          </>
+        ) : (
+          plan.ctaTexto
+        )}
+      </button>
+    </article>
+  );
+}
+
+function UsageBar({ label, current, max, percent }) {
+  const pct = Math.min(percent ?? 0, 100);
+  const isWarning = pct >= 61 && pct <= 85;
+  const isDanger = pct > 85;
+  const isUnlimited = max === -1;
+
+  return (
+    <div className="usage-item" data-testid={`usage-${label.toLowerCase().replace(/\s/g, "-")}`}>
+      <div className="usage-item__header">
+        <span className="usage-item__label">{label}</span>
+        <span className="usage-item__value">
+          {isUnlimited ? `${current} / ∞` : `${current} / ${max}`}
+          {isDanger && !isUnlimited && (
+            <span className="usage-item__badge usage-item__badge--danger">LIMITE PRÓXIMO</span>
+          )}
+          {isWarning && !isUnlimited && (
+            <span className="usage-item__badge usage-item__badge--warning">ATENÇÃO ⚠</span>
+          )}
+        </span>
+      </div>
+      {!isUnlimited && (
+        <div className="usage-bar-track">
+          <div
+            className={`usage-bar-fill ${isDanger ? "usage-bar-fill--danger" : isWarning ? "usage-bar-fill--warning" : "usage-bar-fill--ok"}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-function FeatureItem({ text }) {
+function EnterpriseContactModal({ onClose }) {
   return (
-    <div className="flex items-center gap-2.5">
-      <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-      <span className="text-sm text-muted-foreground">{text}</span>
+    <div className="modal-overlay" onClick={onClose} data-testid="enterprise-modal-overlay">
+      <div className="modal-box" onClick={(e) => e.stopPropagation()} data-testid="enterprise-modal">
+        <div className="modal-box__header">
+          <Building2 size={24} className="modal-box__icon" />
+          <h2>Fale com o Comercial Aurix</h2>
+        </div>
+        <p className="modal-box__body">
+          O plano Enterprise é negociado diretamente com nossa equipe comercial.
+          Entre em contato para desenharmos uma solução sem limites para sua operação.
+        </p>
+        <div className="modal-box__actions">
+          <a
+            href="mailto:comercial@aurix.com.br?subject=Interesse%20no%20plano%20Enterprise%20Aurix"
+            className="btn-primary"
+            data-testid="btn-contato-enterprise-email"
+          >
+            Enviar e-mail
+          </a>
+          <button className="btn-outline" onClick={onClose} data-testid="btn-contato-fechar">
+            Fechar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
+
+// ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function BillingPage() {
   const { user } = useAuth();
   const [billing, setBilling] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [upgrading, setUpgrading] = useState(false);
-  const [searchParams] = useSearchParams();
+  const [checkoutLoading, setCheckoutLoading] = useState(null);
+  const [showEnterpriseModal, setShowEnterpriseModal] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -149,8 +309,8 @@ export default function BillingPage() {
       ]);
       setBilling(billingRes.data);
       setTransactions(txRes.data || []);
-    } catch (error) {
-      toast.error("Erro ao carregar plano");
+    } catch {
+      toast.error("Erro ao carregar informações do plano");
     } finally {
       setLoading(false);
     }
@@ -160,149 +320,291 @@ export default function BillingPage() {
     loadData();
   }, [loadData]);
 
-  // Check for session_id in URL (return from Stripe)
+  // Check for Stripe redirect on return
   useEffect(() => {
-    const sessionId = searchParams.get("session_id");
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("session_id");
     if (sessionId) {
-      checkPayment(sessionId);
+      toast.success("Pagamento processado! Seu plano será atualizado em instantes.");
+      window.history.replaceState({}, "", "/billing");
+      setTimeout(loadData, 2000);
     }
-  }, [searchParams]);
+  }, [loadData]);
 
-  const checkPayment = async (sessionId) => {
+  const handleOpenPortal = async () => {
+    setPortalLoading(true);
     try {
-      const res = await getCheckoutStatus(sessionId);
-      if (res.data.payment_status === "paid") {
-        toast.success(`Plano atualizado para ${res.data.plan.toUpperCase()}!`);
-        loadData();
-      }
-    } catch (error) {
-      console.error("Payment check error:", error);
+      const res = await getBillingPortal();
+      if (res.data?.url) window.location.href = res.data.url;
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : "Erro ao acessar portal Stripe");
+    } finally {
+      setPortalLoading(false);
     }
   };
 
-  const handleUpgrade = async (plan) => {
-    if (user?.role !== "admin") {
-      toast.error("Apenas administradores podem alterar o plano");
+  const handleCancelar = async () => {
+    setCancelLoading(true);
+    try {
+      await cancelarAssinatura();
+      toast.success("Assinatura cancelada. Seu plano foi revertido para Demo.");
+      setShowCancelConfirm(false);
+      await loadData();
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : "Erro ao cancelar assinatura");
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
+  const handlePlanSelect = async (plan) => {
+    if (plan.ctaTipo === "contato") {
+      setShowEnterpriseModal(true);
       return;
     }
-    setUpgrading(true);
+
+    if (plan.ctaTipo === "trial") {
+      toast.info("Você já está no período de demonstração Aurix.");
+      return;
+    }
+
+    // Stripe checkout
+    setCheckoutLoading(plan.key);
     try {
-      const res = await createBillingCheckout({
-        plan,
-        origin_url: window.location.origin,
-      });
-      if (res.data.url) {
+      const origin = window.location.origin;
+      const res = await createBillingCheckout({ plan: plan.key, origin_url: origin });
+      if (res.data?.url) {
         window.location.href = res.data.url;
       }
-    } catch (error) {
-      toast.error(error.response?.data?.detail || "Erro ao iniciar checkout");
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(typeof detail === "string" ? detail : "Erro ao iniciar checkout");
     } finally {
-      setUpgrading(false);
+      setCheckoutLoading(null);
     }
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64" data-testid="billing-loading">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
 
-  const allPlans = billing?.all_plans || {};
-  const currentPlan = billing?.plano || "free";
+  const currentPlan = billing?.plano || "demo";
+  const usage = billing?.usage || {};
+  const limits = billing?.limits || {};
+  const usagePct = billing?.usage_percent || {};
 
   return (
-    <div className="space-y-8 max-w-5xl mx-auto" data-testid="billing-page">
-      {/* Header */}
-      <div className="text-center">
-        <h1 className="font-heading text-3xl font-bold flex items-center justify-center gap-3">
-          <CreditCard className="h-8 w-8 text-primary" />
-          Planos & Billing
-        </h1>
-        <p className="text-muted-foreground mt-2 text-sm max-w-md mx-auto">
-          Escolha o plano ideal para o tamanho da sua operação industrial
-        </p>
-      </div>
+    <div className="billing-page" data-testid="billing-page">
+      <div className="billing-bg" />
 
-      {/* Plans Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {Object.entries(allPlans).map(([key, plan]) => (
-          <PlanCard
-            key={key}
-            planKey={key}
-            plan={plan}
-            currentPlan={currentPlan}
-            isRecommended={key === "pro"}
-            onUpgrade={handleUpgrade}
-            upgrading={upgrading}
-          />
-        ))}
-      </div>
+      <div className="billing-shell">
 
-      {/* Current Usage */}
-      {billing && (
-        <div className="border border-border/50 rounded-xl bg-card p-6 card-hover">
-          <h3 className="font-heading font-semibold flex items-center gap-2 mb-4">
-            <Shield className="h-5 w-5 text-primary" />
-            Uso atual do plano {currentPlan.toUpperCase()}
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              { label: "Equipamentos", current: billing.usage?.equipamentos, max: billing.limits?.max_equipamentos, percent: billing.usage_percent?.equipamentos },
-              { label: "Usuários", current: billing.usage?.users, max: billing.limits?.max_users, percent: billing.usage_percent?.users },
-              { label: "OS este mês", current: billing.usage?.os_mes, max: billing.limits?.max_os_mes, percent: billing.usage_percent?.os_mes },
-            ].map((item) => (
-              <div key={item.label} className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium">{item.label}</span>
-                  <span className="font-mono font-semibold">{item.current || 0}/{item.max || 0}</span>
-                </div>
-                <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-700 ${
-                      (item.percent || 0) >= 95 ? 'bg-red-500' :
-                      (item.percent || 0) >= 80 ? 'bg-amber-500' : 'bg-primary'
-                    }`}
-                    style={{ width: `${Math.min(item.percent || 0, 100)}%` }}
-                  />
-                </div>
+        {/* ── Hero ─────────────────────────────────────────────────────── */}
+        <header className="billing-hero" data-testid="billing-hero">
+          <div className="billing-hero__eyebrow">
+            <Sparkles size={14} />
+            Tecnologia para a Gestão Industrial
+          </div>
+
+          <div className="billing-hero__brand">
+            <span className="billing-hero__brand-text">AURI</span>
+            <span className="billing-hero__brand-accent">X</span>
+          </div>
+
+          <div className="billing-hero__tagline">
+            <p>
+              Estratégia que <strong className="billing-hero__highlight">CORTA</strong> custos.
+            </p>
+            <p>
+              Tecnologia que <strong className="billing-hero__highlight">AMPLIFICA</strong> resultados.
+            </p>
+          </div>
+        </header>
+
+        {/* ── Uso atual (quando já tem plano ativo) ────────────────────── */}
+        {billing && currentPlan !== "demo" && (
+          <section className="billing-usage-card" data-testid="billing-usage">
+            <div className="billing-usage-card__title">
+              <Shield size={18} />
+              <span>
+                Plano atual: <strong>{(PLANS.find((p) => p.key === currentPlan)?.name || currentPlan).toUpperCase()}</strong>
+              </span>
+            </div>
+
+            <div className="billing-usage-card__grid">
+              <UsageBar
+                label="Colaboradores"
+                current={usage.users ?? 0}
+                max={limits.max_users ?? 0}
+                percent={usagePct.users}
+              />
+              <UsageBar
+                label="Equipamentos"
+                current={usage.equipamentos ?? 0}
+                max={limits.max_equipamentos ?? 0}
+                percent={usagePct.equipamentos}
+              />
+              <UsageBar
+                label="OS este mês"
+                current={usage.os_mes ?? 0}
+                max={limits.max_os_mes ?? 0}
+                percent={usagePct.os_mes}
+              />
+            </div>
+          </section>
+        )}
+
+        {/* ── Gerenciar assinatura (planos pagos) ─────────────────────── */}
+        {billing && currentPlan !== "demo" && user?.role === "admin" && (
+          <section className="billing-manage-section" data-testid="billing-manage">
+            <div className="billing-manage-section__title">
+              <Settings2 size={16} />
+              Gerenciar Assinatura
+            </div>
+            <div className="billing-manage-section__actions">
+              <button
+                className="btn-outline billing-manage-btn"
+                onClick={handleOpenPortal}
+                disabled={portalLoading}
+                data-testid="btn-portal-stripe"
+              >
+                {portalLoading ? <Loader2 size={14} className="animate-spin" /> : <ExternalLink size={14} />}
+                Gerenciar no Stripe
+              </button>
+              <button
+                className="btn-outline billing-manage-btn billing-manage-btn--danger"
+                onClick={() => setShowCancelConfirm(true)}
+                disabled={cancelLoading}
+                data-testid="btn-cancelar-assinatura"
+              >
+                <XCircle size={14} />
+                Cancelar Assinatura
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* ── Confirmar cancelamento ───────────────────────────────────── */}
+        {showCancelConfirm && (
+          <div className="modal-overlay" onClick={() => setShowCancelConfirm(false)} data-testid="cancel-confirm-overlay">
+            <div className="modal-box" onClick={(e) => e.stopPropagation()} data-testid="cancel-confirm-modal">
+              <div className="modal-box__header">
+                <XCircle size={24} className="modal-box__icon" style={{ color: "#EF4444" }} />
+                <h2>Cancelar Assinatura</h2>
               </div>
+              <p className="modal-box__body">
+                Tem certeza que deseja cancelar sua assinatura? Seu plano será revertido para <strong>Demo</strong> e você perderá acesso a todos os recursos pagos.
+              </p>
+              <div className="modal-box__actions">
+                <button
+                  className="btn-primary"
+                  style={{ background: "#EF4444", borderColor: "#EF4444" }}
+                  onClick={handleCancelar}
+                  disabled={cancelLoading}
+                  data-testid="btn-confirmar-cancelamento"
+                >
+                  {cancelLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                  Sim, cancelar
+                </button>
+                <button className="btn-outline" onClick={() => setShowCancelConfirm(false)} data-testid="btn-cancelar-fechar">
+                  Voltar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Grid de planos ───────────────────────────────────────────── */}
+        <section className="billing-plans-section" data-testid="billing-plans">
+          <div className="billing-plans-section__head">
+            <h2 className="billing-plans-section__title">
+              Planos pensados para escalar a manutenção industrial
+            </h2>
+            <p className="billing-plans-section__sub">
+              Escolha o plano ideal para o tamanho e complexidade da sua operação.
+            </p>
+          </div>
+
+          <div className="pricing-grid" data-testid="pricing-grid">
+            {PLANS.map((plan) => (
+              <PricingCard
+                key={plan.key}
+                plan={plan}
+                currentPlan={currentPlan}
+                onSelect={handlePlanSelect}
+                loading={checkoutLoading}
+              />
             ))}
           </div>
-        </div>
-      )}
+        </section>
 
-      {/* Transactions */}
-      {transactions.length > 0 && (
-        <div className="border border-border/50 rounded-xl bg-card overflow-hidden card-hover">
-          <div className="px-6 py-4 border-b border-border/50 flex items-center gap-2">
-            <Receipt className="h-5 w-5 text-primary" />
-            <h3 className="font-heading font-semibold text-sm">Histórico de Pagamentos</h3>
-          </div>
-          <div className="divide-y divide-border/30">
-            {transactions.map((tx) => (
-              <div key={tx.id} className="flex items-center justify-between px-6 py-3.5">
-                <div className="flex items-center gap-3">
-                  <div className={`w-2 h-2 rounded-full ${tx.payment_status === 'paid' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                  <div>
-                    <p className="text-sm font-medium">Upgrade para {tx.plan?.toUpperCase()}</p>
-                    <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {tx.created_at ? new Date(tx.created_at).toLocaleDateString('pt-BR') : '—'}
-                    </p>
+        {/* ── Diferenciais ─────────────────────────────────────────────── */}
+        <section className="billing-trust" data-testid="billing-trust">
+          {TRUST_ITEMS.map((item) => (
+            <div key={item.title} className="billing-trust__item">
+              <div className="billing-trust__icon">
+                <item.icon size={20} />
+              </div>
+              <div>
+                <p className="billing-trust__title">{item.title}</p>
+                <p className="billing-trust__desc">{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </section>
+
+        {/* ── Histórico de transações ───────────────────────────────────── */}
+        {transactions.length > 0 && (
+          <section className="billing-transactions" data-testid="billing-transactions">
+            <div className="billing-transactions__header">
+              <Receipt size={18} />
+              <div>
+                <h3>Histórico de pagamentos</h3>
+                <p>Linha do tempo das últimas movimentações de assinatura.</p>
+              </div>
+            </div>
+
+            <div className="billing-transactions__list">
+              {transactions.map((tx) => (
+                <div key={tx.id} className="billing-transactions__item" data-testid={`transaction-${tx.id}`}>
+                  <div className="billing-transactions__item-left">
+                    <span
+                      className={`billing-transactions__dot ${tx.payment_status === "paid" ? "billing-transactions__dot--paid" : "billing-transactions__dot--pending"}`}
+                    />
+                    <div>
+                      <p className="billing-transactions__plan">
+                        Upgrade para {tx.plan?.toUpperCase()}
+                      </p>
+                      <p className="billing-transactions__date">
+                        <Clock size={12} />
+                        {tx.created_at ? new Date(tx.created_at).toLocaleDateString("pt-BR") : "—"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="billing-transactions__item-right">
+                    <p className="billing-transactions__amount">R$ {tx.amount?.toFixed(2)}</p>
+                    <span
+                      className={`billing-transactions__status ${tx.payment_status === "paid" ? "billing-transactions__status--paid" : "billing-transactions__status--pending"}`}
+                    >
+                      {tx.payment_status === "paid" ? "Pago" : "Pendente"}
+                    </span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-sm font-mono font-semibold">${tx.amount?.toFixed(2)}</p>
-                  <p className={`text-[10px] font-semibold uppercase ${tx.payment_status === 'paid' ? 'text-emerald-500' : 'text-amber-500'}`}>
-                    {tx.payment_status}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+
+      {/* ── Modal Enterprise ────────────────────────────────────────────── */}
+      {showEnterpriseModal && (
+        <EnterpriseContactModal onClose={() => setShowEnterpriseModal(false)} />
       )}
     </div>
   );

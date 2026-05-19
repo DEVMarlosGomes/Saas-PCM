@@ -60,8 +60,8 @@ export default function RegisterPage() {
               <Wrench className="h-6 w-6 text-white" />
             </div>
             <div>
-              <span className="font-heading font-bold text-xl text-white">PCM</span>
-              <span className="text-white/40 text-xs block">SaaS Platform</span>
+              <span className="font-heading font-bold text-xl text-white">AURIX</span>
+              <span className="text-white/40 text-xs block">Gestão Industrial</span>
             </div>
           </div>
 
@@ -104,7 +104,7 @@ export default function RegisterPage() {
           </div>
 
           <p className="text-xs text-white/20">
-            © 2026 PCM SaaS — Planejamento e Controle de Manutenção
+            © 2026 AURIX — Tecnologia para a Gestão Industrial
           </p>
         </div>
       </div>
@@ -118,8 +118,8 @@ export default function RegisterPage() {
               <Wrench className="h-5 w-5" />
             </div>
             <div>
-              <span className="font-heading font-bold text-xl">PCM</span>
-              <span className="text-muted-foreground text-xs block">SaaS Platform</span>
+              <span className="font-heading font-bold text-xl">AURIX</span>
+              <span className="text-muted-foreground text-xs block">Gestão Industrial</span>
             </div>
           </div>
 

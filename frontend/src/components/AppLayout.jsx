@@ -22,8 +22,13 @@ import {
   Bell,
   Search,
   Shield,
+  Activity,
+  BarChart2,
+  Kanban,
 } from "lucide-react";
 import { useState, useEffect } from "react";
+import NotificacoesDropdown from "./shared/NotificacoesDropdown";
+import { getAlertasPreditivos } from "../lib/api";
 
 const navSections = [
   {
@@ -37,7 +42,15 @@ const navSections = [
     items: [
       { to: "/equipamentos", icon: Settings, label: "Equipamentos" },
       { to: "/ordens-servico", icon: Wrench, label: "Ordens de Serviço" },
-      { to: "/planos-preventivos", icon: Calendar, label: "PCM Preventiva" },
+      { to: "/kanban", icon: Kanban, label: "Kanban" },
+      { to: "/planos-preventivos", icon: Calendar, label: "Manutenção Preventiva" },
+    ],
+  },
+  {
+    label: "Inteligência",
+    items: [
+      { to: "/preditivo", icon: Activity, label: "Análise Preditiva" },
+      { to: "/relatorios", icon: BarChart2, label: "Relatórios" },
     ],
   },
   {
@@ -77,6 +90,17 @@ export default function AppLayout() {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [alertasCriticos, setAlertasCriticos] = useState(0);
+
+  useEffect(() => {
+    if (!user?.features?.modulo_preditivo) return;
+    const fetch = () => getAlertasPreditivos({ severidade: "CRITICO" })
+      .then(r => setAlertasCriticos((r.data || []).length))
+      .catch(() => {});
+    fetch();
+    const iv = setInterval(fetch, 60000);
+    return () => clearInterval(iv);
+  }, [user]);
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -105,26 +129,31 @@ export default function AppLayout() {
       dashboard: "Dashboard",
       equipamentos: "Equipamentos",
       "ordens-servico": "Ordens de Serviço",
-      "planos-preventivos": "PCM Preventiva",
+      "planos-preventivos": "Manutenção Preventiva",
+      preditivo: "Análise Preditiva",
+      relatorios: "Relatórios",
+      kanban: "Kanban de OS",
       usuarios: "Usuários",
       auditoria: "Auditoria",
       billing: "Planos & Billing",
       settings: "Configurações",
     };
-    return map[path] || "PCM";
+    return map[path] || "Aurix";
   };
 
   const SidebarContent = () => (
     <div className="flex flex-col h-full">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-16 border-b border-border/50 shrink-0">
-        <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary text-primary-foreground">
-          <Wrench className="h-5 w-5" />
+        <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-primary text-primary-foreground font-bold text-sm shrink-0">
+          A
         </div>
         {!collapsed && (
           <div className="animate-fade-in">
-            <span className="font-heading font-bold text-lg tracking-tight">PCM</span>
-            <span className="text-[10px] font-medium text-muted-foreground block -mt-0.5">Manutenção Industrial</span>
+            <span className="font-heading font-bold text-lg tracking-tight">
+              AURI<span className="text-primary">X</span>
+            </span>
+            <span className="text-[10px] font-medium text-muted-foreground block -mt-0.5">Tecnologia para a Gestão Industrial</span>
           </div>
         )}
       </div>
@@ -163,7 +192,13 @@ export default function AppLayout() {
                           <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-primary" />
                         )}
                         <item.icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? '' : 'group-hover:scale-110 transition-transform'}`} />
-                        {!collapsed && <span className="truncate">{item.label}</span>}
+                        {!collapsed && <span className="truncate flex-1">{item.label}</span>}
+                        {!collapsed && item.to === "/preditivo" && alertasCriticos > 0 && (
+                          <span className="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400"
+                            data-testid="badge-alertas-criticos">
+                            {alertasCriticos}
+                          </span>
+                        )}
                       </>
                     )}
                   </NavLink>
@@ -279,6 +314,7 @@ export default function AppLayout() {
 
             {/* Right side actions */}
             <div className="flex items-center gap-1.5">
+              <NotificacoesDropdown />
               <Button
                 variant="ghost"
                 size="icon"

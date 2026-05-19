@@ -14,6 +14,9 @@ import UsuariosPage from "./pages/UsuariosPage";
 import AuditoriaPage from "./pages/AuditoriaPage";
 import BillingPage from "./pages/BillingPage";
 import SettingsPage from "./pages/SettingsPage";
+import PreditivoPage from "./pages/PreditivoPage";
+import RelatoriosPage from "./pages/RelatoriosPage";
+import KanbanPage from "./pages/KanbanPage";
 
 // Layout
 import AppLayout from "./components/AppLayout";
@@ -28,7 +31,7 @@ const ProtectedRoute = ({ children }) => {
           <div className="relative">
             <div className="w-12 h-12 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
           </div>
-          <span className="text-sm text-muted-foreground font-medium">Carregando PCM...</span>
+          <span className="text-sm text-muted-foreground font-medium">Carregando AURIX...</span>
         </div>
       </div>
     );
@@ -73,6 +76,9 @@ function AppRoutes() {
         <Route path="planos-preventivos" element={<PlanosPreventivosPage />} />
         <Route path="usuarios" element={<UsuariosPage />} />
         <Route path="auditoria" element={<AuditoriaPage />} />
+        <Route path="preditivo" element={<PreditivoPage />} />
+        <Route path="relatorios" element={<RelatoriosPage />} />
+        <Route path="kanban" element={<KanbanPage />} />
         <Route path="billing" element={<BillingPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>

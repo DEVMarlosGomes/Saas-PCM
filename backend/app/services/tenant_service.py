@@ -42,7 +42,7 @@ def check_plan_limit(db: Session, org: Organization, resource: str) -> tuple:
     Returns (allowed: bool, message: str)
     """
     usage = get_org_usage(db, org.id)
-    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.FREE])
+    limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.DEMO])
 
     limit_map = {
         "equipamentos": ("max_equipamentos", usage["equipamentos"]),
@@ -56,9 +56,15 @@ def check_plan_limit(db: Session, org: Organization, resource: str) -> tuple:
     limit_key, current = limit_map[resource]
     max_val = limits[limit_key]
 
+    if max_val == -1:
+        return True, ""
+
     if current >= max_val:
         plan_label = limits["label"]
-        return False, f"Limite do plano {plan_label} atingido: {current}/{max_val} {resource}. Faça upgrade para continuar."
+        return False, (
+            f"Limite do plano {plan_label} atingido: {current}/{max_val} {resource}. "
+            f"Faça upgrade para continuar."
+        )
 
     return True, ""
 

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('server.py: OK'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('c:/Users/MARLOS/Documents/RENATO/Saas-PCM/backend/server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Read(//c/Users/MARLOS/.claude/projects/c--Users-MARLOS-Documents-RENATO-Saas-PCM/memory/**)",
+      "Bash(cd /mnt/c/Users/MARLOS/Documents/RENATO/Saas-PCM && wc -l backend/server.py)",
+      "Read(//mnt/c/Users/MARLOS/Documents/RENATO/**)",
+      "Bash(Get-Content \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\\\\backend\\\\server.py\")",
+      "Bash(Measure-Object -Line)",
+      "PowerShell(\\(Get-Content \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\\\\backend\\\\server.py\" | Measure-Object -Line\\).Lines)",
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('c:/Users/MARLOS/Documents/RENATO/Saas-PCM/backend/server.py'\\).read\\(\\)\\); print\\('OK'\\)\" 2>&1)",
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('c:/Users/MARLOS/Documents/RENATO/Saas-PCM/backend/server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\MARLOS\\.claude\\projects\\c--Users-MARLOS-Documents-RENATO-Saas-PCM\\memory"
+    ]
+  }
+}
