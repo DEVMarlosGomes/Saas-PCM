@@ -143,6 +143,7 @@ export const getCheckoutStatus = (sessionId) => api.get(`/billing/checkout/statu
 export const getBillingTransactions = () => api.get('/billing/transactions');
 export const cancelarAssinatura = () => api.post('/billing/cancelar');
 export const getBillingPortal = () => api.get('/billing/portal');
+export const changePlan = (plan) => api.post('/billing/change-plan', { plan });
 export const contatoEnterprise = (data) => api.post('/billing/contato-enterprise', data);
 
 // ─── Confiabilidade / Reliability ─────────────────────────

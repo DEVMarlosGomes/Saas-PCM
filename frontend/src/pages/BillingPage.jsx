@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import "./BillingPage.css";
 import { useAuth } from "../contexts/AuthContext";
-import { getBillingPlan, getBillingTransactions, createBillingCheckout, getBillingPortal, cancelarAssinatura } from "../lib/api";
+import { getBillingPlan, getBillingTransactions, getBillingPortal, cancelarAssinatura, changePlan } from "../lib/api";
 import { toast } from "sonner";
 import {
+  ArrowRight,
   BarChart3,
   Building2,
   Check,
@@ -300,6 +301,7 @@ export default function BillingPage() {
   const [portalLoading, setPortalLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [confirmPlan, setConfirmPlan] = useState(null); // plan object awaiting confirmation
 
   const loadData = useCallback(async () => {
     try {
@@ -359,28 +361,31 @@ export default function BillingPage() {
     }
   };
 
-  const handlePlanSelect = async (plan) => {
+  const handlePlanSelect = (plan) => {
     if (plan.ctaTipo === "contato") {
       setShowEnterpriseModal(true);
       return;
     }
-
     if (plan.ctaTipo === "trial") {
       toast.info("Você já está no período de demonstração Aurix.");
       return;
     }
+    // Abre modal de confirmação antes de trocar
+    setConfirmPlan(plan);
+  };
 
-    // Stripe checkout
-    setCheckoutLoading(plan.key);
+  const handleConfirmPlan = async () => {
+    if (!confirmPlan) return;
+    setCheckoutLoading(confirmPlan.key);
     try {
-      const origin = window.location.origin;
-      const res = await createBillingCheckout({ plan: plan.key, origin_url: origin });
-      if (res.data?.url) {
-        window.location.href = res.data.url;
-      }
+      const res = await changePlan(confirmPlan.key);
+      const label = res.data?.label || confirmPlan.name;
+      toast.success(`Plano alterado para ${label} com sucesso!`);
+      setConfirmPlan(null);
+      await loadData();
     } catch (err) {
       const detail = err?.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "Erro ao iniciar checkout");
+      toast.error(typeof detail === "string" ? detail : "Erro ao trocar plano");
     } finally {
       setCheckoutLoading(null);
     }
@@ -601,6 +606,73 @@ export default function BillingPage() {
           </section>
         )}
       </div>
+
+      {/* ── Modal Confirmar Troca de Plano ──────────────────────────────── */}
+      {confirmPlan && (
+        <div
+          className="modal-overlay"
+          onClick={() => { if (!checkoutLoading) setConfirmPlan(null); }}
+          data-testid="confirm-plan-overlay"
+        >
+          <div className="modal-box" onClick={(e) => e.stopPropagation()} data-testid="confirm-plan-modal">
+            <div className="modal-box__header">
+              <ArrowRight size={24} className="modal-box__icon" />
+              <h2>Confirmar troca de plano</h2>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px", margin: "16px 0" }}>
+              {/* De → Para */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "12px", flexWrap: "wrap" }}>
+                <span style={{ padding: "6px 14px", borderRadius: "8px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", fontSize: "13px", fontWeight: 600 }}>
+                  {(PLANS.find((p) => p.key === currentPlan)?.name || currentPlan).toUpperCase()}
+                </span>
+                <ArrowRight size={16} style={{ opacity: 0.5 }} />
+                <span style={{ padding: "6px 14px", borderRadius: "8px", background: "rgba(26,111,232,0.15)", border: "1px solid rgba(26,111,232,0.3)", fontSize: "13px", fontWeight: 700, color: "#60a5fa" }}>
+                  {confirmPlan.name.toUpperCase()}
+                </span>
+              </div>
+
+              {/* Preço */}
+              {confirmPlan.price && (
+                <p style={{ textAlign: "center", fontSize: "22px", fontWeight: 800, letterSpacing: "-0.5px" }}>
+                  R$ {confirmPlan.price.toLocaleString("pt-BR")}
+                  <span style={{ fontSize: "13px", fontWeight: 400, opacity: 0.6 }}>/mês</span>
+                </p>
+              )}
+
+              {/* Features */}
+              <ul style={{ display: "flex", flexDirection: "column", gap: "6px", padding: "12px 16px", background: "rgba(255,255,255,0.03)", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.06)", listStyle: "none", margin: 0 }}>
+                {confirmPlan.features.filter(f => f.included).map((f) => (
+                  <li key={f.text} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+                    <Check size={13} style={{ color: "#10b981", flexShrink: 0 }} />
+                    {f.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="modal-box__actions">
+              <button
+                className="btn-primary"
+                onClick={handleConfirmPlan}
+                disabled={!!checkoutLoading}
+                data-testid="btn-confirmar-plano"
+              >
+                {checkoutLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Confirmar troca
+              </button>
+              <button
+                className="btn-outline"
+                onClick={() => setConfirmPlan(null)}
+                disabled={!!checkoutLoading}
+                data-testid="btn-cancelar-troca"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal Enterprise ────────────────────────────────────────────── */}
       {showEnterpriseModal && (

@@ -2961,6 +2961,68 @@ async def list_transactions(user: User = Depends(get_current_user), db: Session 
         "created_at": t.created_at.isoformat() if t.created_at else None,
     } for t in transactions]
 
+@api_router.post("/billing/change-plan")
+async def change_plan_direct(
+    data: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Troca de plano direta (sem Stripe). Disponível para ambientes sem integração de pagamento."""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas administradores podem alterar o plano")
+
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organização não encontrada")
+
+    plan_key = (data.get("plan") or "").lower().strip()
+    try:
+        target_plan = PlanoSaaS(plan_key)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Plano inválido: {plan_key}")
+
+    if target_plan == PlanoSaaS.ENTERPRISE:
+        raise HTTPException(status_code=400, detail="Para o plano Enterprise, entre em contato com o comercial Aurix")
+
+    if org.plano == target_plan:
+        raise HTTPException(status_code=400, detail="Você já está neste plano")
+
+    plan_info = PLAN_LIMITS[target_plan]
+
+    old_plan = org.plano.value
+    org.plano = target_plan
+    org.limite_equipamentos = plan_info["max_equipamentos"]
+    org.limite_usuarios = plan_info["max_users"]
+    org.limite_os_mes = plan_info["max_os_mes"]
+
+    import json as _json
+    tx = PaymentTransaction(
+        organization_id=org.id,
+        session_id=f"direct_{old_plan}_to_{target_plan.value}_{int(datetime.now().timestamp())}",
+        plan=target_plan.value,
+        amount=plan_info["price"],
+        currency="brl",
+        payment_status="paid",
+        metadata_json=_json.dumps({
+            "organization_id": str(org.id),
+            "plan": target_plan.value,
+            "previous_plan": old_plan,
+            "user_id": str(user.id),
+            "method": "direct",
+        }),
+    )
+    db.add(tx)
+    db.commit()
+
+    return {
+        "ok": True,
+        "plano_anterior": old_plan,
+        "plano": target_plan.value,
+        "label": plan_info["label"],
+        "message": f"Plano alterado para {plan_info['label']} com sucesso.",
+    }
+
+
 @api_router.get("/billing/portal")
 async def get_billing_portal(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Return Stripe Customer Portal URL for managing subscription/payment methods"""
