@@ -4096,25 +4096,26 @@ async def seed_demo_data(reset: bool = False, db: Session = Depends(get_db)):
 
     # ── Reset: deletar org existente em ordem de dependência ─────────────────
     if demo_org and reset:
-        oid = demo_org.id
-        for Model, col in [
-            (AuditoriaLog,             "organization_id"),
-            (Notificacao,              "org_id"),
-            (CustoOS,                  "organization_id"),
-            (AlertaPreditivo,          "organization_id"),
-            (LeituraSensor,            "organization_id"),
-            (ConfiguracaoMonitoramento,"organization_id"),
-            (OrdemServico,             "organization_id"),
-            (PlanoPreventivo,          "organization_id"),
-            (Equipamento,              "organization_id"),
-            (Subgrupo,                 "organization_id"),
-            (Grupo,                    "organization_id"),
-            (PaymentTransaction,       "organization_id"),
-            (User,                     "organization_id"),
+        oid = str(demo_org.id)
+        for table, col in [
+            ("auditoria_logs",               "organization_id"),
+            ("notificacoes",                 "org_id"),
+            ("custos_os",                    "organization_id"),
+            ("alertas_preditivos",           "organization_id"),
+            ("leituras_sensor",              "organization_id"),
+            ("configuracoes_monitoramento",  "organization_id"),
+            ("ordens_servico",               "organization_id"),
+            ("planos_preventivos",           "organization_id"),
+            ("equipamentos",                 "organization_id"),
+            ("subgrupos",                    "organization_id"),
+            ("grupos",                       "organization_id"),
+            ("payment_transactions",         "organization_id"),
+            ("users",                        "organization_id"),
         ]:
-            db.query(Model).filter(getattr(Model, col) == oid).delete(synchronize_session=False)
-        db.delete(demo_org)
+            db.execute(sa_text(f"DELETE FROM {table} WHERE {col} = :oid"), {"oid": oid})
+        db.execute(sa_text("DELETE FROM organizations WHERE id = :oid"), {"oid": oid})
         db.commit()
+        db.expire_all()
 
     rng = _random.Random(42)  # deterministic for reproducibility
     now = datetime.now(timezone.utc)
