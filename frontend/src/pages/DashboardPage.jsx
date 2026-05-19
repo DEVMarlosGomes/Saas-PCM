@@ -261,13 +261,16 @@ export default function DashboardPage() {
     );
   }
 
-  const pieData = kpis?.preventiva_vs_corretiva ? [
-    { name: "Preventiva", value: kpis.preventiva_vs_corretiva.preventiva },
-    { name: "Corretiva", value: kpis.preventiva_vs_corretiva.corretiva }
-  ] : [];
+  const pvc = kpis?.preventiva_vs_corretiva || {};
+  const pieData = [
+    { name: "Corretiva",  value: pvc.corretiva  || 0, color: CHART_COLORS.danger  },
+    { name: "Preventiva", value: pvc.preventiva || 0, color: CHART_COLORS.success },
+    { name: "Preditiva",  value: pvc.preditiva  || 0, color: CHART_COLORS.purple  },
+  ].filter(d => d.value > 0);
 
-  const totalPie = (pieData[0]?.value || 0) + (pieData[1]?.value || 0);
-  const prevPercent = totalPie > 0 ? Math.round((pieData[0]?.value / totalPie) * 100) : 0;
+  const totalPie = pieData.reduce((s, d) => s + d.value, 0);
+  const prevVal  = pvc.preventiva || 0;
+  const prevPercent = totalPie > 0 ? Math.round((prevVal / totalPie) * 100) : 0;
 
   // Plan usage warning
   const showPlanWarning = billing && billing.usage_percent && (
@@ -448,11 +451,13 @@ export default function DashboardPage() {
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Preventiva vs Corretiva */}
+        {/* Mix de Manutenção */}
         <div className="border border-border/50 rounded-xl bg-card p-5 card-hover">
-          <h3 className="font-heading font-semibold text-sm mb-1">Preventiva vs Corretiva</h3>
+          <h3 className="font-heading font-semibold text-sm mb-1">Mix de Manutenção</h3>
           <p className="text-xs text-muted-foreground mb-4">
-            {prevPercent}% preventiva — {prevPercent >= 60 ? "✅ Boa prática" : "⚠️ Oportunidade de melhoria"}
+            {totalPie > 0
+              ? `${prevPercent}% preventiva — ${prevPercent >= 60 ? "✅ Boa prática" : "⚠️ Oportunidade de melhoria"}`
+              : "Sem OS registradas"}
           </p>
           {totalPie > 0 ? (
             <ResponsiveContainer width="100%" height={220}>
@@ -460,21 +465,51 @@ export default function DashboardPage() {
                 <Pie
                   data={pieData}
                   cx="50%"
-                  cy="50%"
+                  cy="45%"
                   innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={4}
+                  outerRadius={82}
+                  paddingAngle={3}
                   dataKey="value"
                   strokeWidth={0}
+                  label={({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
+                    if (percent < 0.05) return null;
+                    const RADIAN = Math.PI / 180;
+                    const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+                    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                    return (
+                      <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central"
+                        fontSize={11} fontWeight={700}>
+                        {`${(percent * 100).toFixed(0)}%`}
+                      </text>
+                    );
+                  }}
                 >
-                  <Cell fill={CHART_COLORS.success} />
-                  <Cell fill={CHART_COLORS.danger} />
+                  {pieData.map((entry, i) => (
+                    <Cell key={i} fill={entry.color} />
+                  ))}
                 </Pie>
                 <Legend
                   verticalAlign="bottom"
-                  formatter={(value) => <span className="text-xs font-medium">{value}</span>}
+                  formatter={(value, entry) => (
+                    <span className="text-xs font-medium">
+                      {value} ({entry.payload.value})
+                    </span>
+                  )}
                 />
-                <Tooltip content={<CustomTooltip />} />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null;
+                    const d = payload[0].payload;
+                    const pct = totalPie > 0 ? Math.round((d.value / totalPie) * 100) : 0;
+                    return (
+                      <div className="bg-card/95 backdrop-blur-xl border border-border rounded-lg px-3 py-2 shadow-xl">
+                        <p className="text-xs font-semibold">{d.name}</p>
+                        <p className="text-xs text-muted-foreground">{d.value} OS ({pct}%)</p>
+                      </div>
+                    );
+                  }}
+                />
               </PieChart>
             </ResponsiveContainer>
           ) : (

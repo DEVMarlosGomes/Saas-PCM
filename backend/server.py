@@ -2441,16 +2441,18 @@ async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session
             horas_parada = o.tempo_total / 60
             custo_parada += horas_parada * equip.valor_hora
     
-    # Preventiva vs Corretiva
+    # Mix de tipos de OS (todas — sem filtro mensal para dar visão completa)
     preventivas = db.query(OrdemServico).filter(
         OrdemServico.organization_id == org_id,
-        OrdemServico.created_at >= first_day_month,
         OrdemServico.tipo == TipoOS.PREVENTIVA
     ).count()
     corretivas = db.query(OrdemServico).filter(
         OrdemServico.organization_id == org_id,
-        OrdemServico.created_at >= first_day_month,
         OrdemServico.tipo == TipoOS.CORRETIVA
+    ).count()
+    preditivas = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == org_id,
+        OrdemServico.tipo == TipoOS.PREDITIVA
     ).count()
     
     # Top equipamentos por falhas
@@ -2516,7 +2518,7 @@ async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session
         custo_total_mes=round(custo_total_mes, 2),
         custo_parada_mes=round(custo_parada, 2),
         avg_tempo_resposta=round(avg_tempo_resposta, 1),
-        preventiva_vs_corretiva={"preventiva": preventivas, "corretiva": corretivas},
+        preventiva_vs_corretiva={"preventiva": preventivas, "corretiva": corretivas, "preditiva": preditivas},
         top_equipamentos_falhas=top_equipamentos_falhas,
         top_equipamentos_custos=top_equipamentos_custos,
         top_equipamentos_downtime=top_equipamentos_downtime
