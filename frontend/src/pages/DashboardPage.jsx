@@ -206,18 +206,21 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
-  const handleSeedDemo = async () => {
+  const [seedCreds, setSeedCreds] = useState(null);
+
+  const handleSeedDemo = async (reset = false) => {
     setSeeding(true);
     try {
-      const res = await seedDemo();
-      toast.success(`Dados demo criados! Login: ${res.data.email}`);
+      const res = await seedDemo(reset);
+      if (res.data?.credenciais) {
+        setSeedCreds(res.data.credenciais);
+        toast.success(`Dados demo ${reset ? "recriados" : "criados"}! 12 usuários criados.`);
+      } else {
+        toast.info(res.data?.message || "Dados de demonstração já existem. Use 'Recriar' para resetar.");
+      }
       loadData();
     } catch (error) {
-      if (error.response?.data?.message?.includes("já existem")) {
-        toast.info("Dados de demonstração já existem");
-      } else {
-        toast.error("Erro ao criar dados de demonstração");
-      }
+      toast.error("Erro ao criar dados de demonstração");
     } finally {
       setSeeding(false);
     }
@@ -297,12 +300,52 @@ export default function DashboardPage() {
             <RefreshCw className="h-4 w-4 mr-2" />
             Atualizar
           </Button>
-          <Button variant="outline" size="sm" onClick={handleSeedDemo} disabled={seeding} className="h-9 rounded-lg" data-testid="seed-demo-btn">
+          <Button variant="outline" size="sm" onClick={() => handleSeedDemo(false)} disabled={seeding} className="h-9 rounded-lg" data-testid="seed-demo-btn">
             <Database className="h-4 w-4 mr-2" />
             {seeding ? "Criando..." : "Demo"}
           </Button>
+          <Button variant="outline" size="sm" onClick={() => handleSeedDemo(true)} disabled={seeding} className="h-9 rounded-lg text-amber-500 border-amber-500/30 hover:bg-amber-500/10" data-testid="seed-reset-btn" title="Apaga todos os dados demo e recria do zero">
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Recriar
+          </Button>
         </div>
       </div>
+
+      {/* Credenciais de Demo */}
+      {seedCreds && (
+        <div className="bg-card border border-primary/20 rounded-xl p-5 animate-slide-in-bottom" data-testid="seed-credentials-panel">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-primary" />
+              <span className="font-semibold text-sm">Credenciais de Acesso — Demo</span>
+            </div>
+            <button onClick={() => setSeedCreds(null)} className="text-muted-foreground hover:text-foreground text-xs" data-testid="btn-fechar-credenciais">✕ Fechar</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border/40">
+                  {["Perfil","E-mail","Senha","Role","Setor"].map(h => (
+                    <th key={h} className="text-left text-muted-foreground font-medium px-3 py-2">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(seedCreds).map(([key, c]) => (
+                  <tr key={key} className="border-b border-border/10 hover:bg-muted/20">
+                    <td className="px-3 py-2 font-medium capitalize">{key.replace(/_/g," ")}</td>
+                    <td className="px-3 py-2 font-mono text-primary">{c.email}</td>
+                    <td className="px-3 py-2 font-mono">{c.senha}</td>
+                    <td className="px-3 py-2 capitalize">{c.role}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{c.setor || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-3">Plano: AVANÇADO · 15 equipamentos · 50 OS · 420 leituras de sensor · 7 alertas preditivos</p>
+        </div>
+      )}
 
       {/* Plan Warning Banner */}
       {showPlanWarning && (

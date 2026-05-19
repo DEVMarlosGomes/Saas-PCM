@@ -184,6 +184,6 @@ export const marcarTodasLidas = () => api.post('/notificacoes/ler-todas');
 export const changePassword = (data) => api.post('/auth/change-password', data);
 
 // ─── Seed Demo ────────────────────────────────────────────
-export const seedDemo = () => api.post('/seed-demo');
+export const seedDemo = (reset = false) => api.post(`/seed-demo${reset ? '?reset=true' : ''}`);
 
 export default api;
