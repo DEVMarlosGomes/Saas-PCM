@@ -4162,6 +4162,7 @@ async def get_kanban(
             "tecnico": user_map.get(str(o.tecnico_id), None) if o.tecnico_id else None,
             "descricao": (o.descricao or "")[:80],
             "created_at": o.created_at.isoformat() if o.created_at else None,
+            "inicio_atendimento": o.inicio_atendimento.isoformat() if o.inicio_atendimento else None,
             "dentro_sla": o.dentro_sla,
             "reincidente": o.reincidente,
             "tempo_resposta": o.tempo_resposta,

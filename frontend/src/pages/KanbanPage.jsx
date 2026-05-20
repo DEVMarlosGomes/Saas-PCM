@@ -4,7 +4,7 @@ import { getKanban, updateOrdemServico } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  Kanban, Lock, Loader2, AlertTriangle, RefreshCw, Clock, Repeat2,
+  Kanban, Lock, Loader2, AlertTriangle, RefreshCw, Clock, Repeat2, Timer, Zap,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 
@@ -54,6 +54,24 @@ function UpgradeGate() {
   );
 }
 
+// SLA thresholds (minutes) by priority
+const SLA_MINUTOS = { critica: 15, alta: 30, media: 120, baixa: 480 };
+
+// Convert minutes to readable string
+function fmtMin(min) {
+  if (min == null) return "—";
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}h${m}min` : `${h}h`;
+}
+
+// Time elapsed since an ISO string, in minutes
+function elapsedMin(iso) {
+  if (!iso) return 0;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+}
+
 // ─── KanbanCard ──────────────────────────────────────────────────────────────
 
 function KanbanCard({ card, onDragStart }) {
@@ -66,6 +84,38 @@ function KanbanCard({ card, onDragStart }) {
     if (diff < 1) return "< 1h";
     if (diff < 24) return `${Math.floor(diff)}h`;
     return `${Math.floor(diff / 24)}d`;
+  }
+
+  // ── Response time badge ──────────────────────────────────────────────────
+  // cards still "aberta": show waiting time + SLA pressure color
+  // cards already attended: show actual tempo_resposta + SLA result color
+  const isAberta = card.tempo_resposta == null;
+  const slaSecs = SLA_MINUTOS[card.prioridade] ?? 120;
+
+  let responseLabel, responseColor, responseBg, ResponseIcon;
+
+  if (isAberta) {
+    // Still waiting — show elapsed time since creation
+    const waitMin = elapsedMin(card.created_at);
+    const ratio = waitMin / slaSecs;
+    responseLabel = `Aguardando ${fmtMin(waitMin)}`;
+    if (ratio >= 1) {
+      responseColor = "#EF4444"; responseBg = "rgba(239,68,68,0.12)";
+    } else if (ratio >= 0.75) {
+      responseColor = "#F97316"; responseBg = "rgba(249,115,22,0.12)";
+    } else {
+      responseColor = "#EAB308"; responseBg = "rgba(234,179,8,0.10)";
+    }
+    ResponseIcon = Timer;
+  } else {
+    // Attended — show actual response time
+    responseLabel = `Resp: ${fmtMin(card.tempo_resposta)}`;
+    if (card.dentro_sla !== false) {
+      responseColor = "#10B981"; responseBg = "rgba(16,185,129,0.10)";
+    } else {
+      responseColor = "#EF4444"; responseBg = "rgba(239,68,68,0.12)";
+    }
+    ResponseIcon = Zap;
   }
 
   return (
@@ -124,6 +174,25 @@ function KanbanCard({ card, onDragStart }) {
         </p>
       )}
 
+      {/* Response time badge */}
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        padding: "3px 8px", borderRadius: 6, marginBottom: 8,
+        background: responseBg,
+        border: `1px solid ${responseColor}33`,
+      }}>
+        <ResponseIcon size={10} style={{ color: responseColor, flexShrink: 0 }} />
+        <span style={{ fontSize: 10, fontWeight: 700, color: responseColor, letterSpacing: "0.01em" }}>
+          {responseLabel}
+        </span>
+        {!isAberta && card.dentro_sla === false && (
+          <span style={{ fontSize: 9, color: "#EF4444", fontWeight: 700, marginLeft: 2 }}>· Fora do SLA</span>
+        )}
+        {!isAberta && card.dentro_sla !== false && (
+          <span style={{ fontSize: 9, color: "#10B981", fontWeight: 700, marginLeft: 2 }}>· No SLA</span>
+        )}
+      </div>
+
       {/* Footer */}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         {card.tecnico && (
@@ -142,9 +211,6 @@ function KanbanCard({ card, onDragStart }) {
         )}
         {card.reincidente && (
           <span title="Reincidente" style={{ color: "#F97316" }}><Repeat2 size={11} /></span>
-        )}
-        {card.dentro_sla === false && (
-          <span title="Fora do SLA" style={{ color: "#EF4444" }}><AlertTriangle size={11} /></span>
         )}
       </div>
     </div>
@@ -338,16 +404,22 @@ export default function KanbanPage() {
       </div>
 
       {/* Legend */}
-      <div style={{ display: "flex", gap: 16, flexShrink: 0, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 16, flexShrink: 0, flexWrap: "wrap", alignItems: "center" }}>
         {Object.entries(PRIORIDADE_CONFIG).map(([k, v]) => (
           <span key={k} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: v.color }} />
             {v.label}
           </span>
         ))}
-        <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "rgba(255,255,255,0.4)", marginLeft: 8 }}>
-          <AlertTriangle size={10} style={{ color: "#EF4444" }} /> Fora do SLA
-          <Repeat2 size={10} style={{ color: "#F97316", marginLeft: 6 }} /> Reincidente
+        <span style={{ width: 1, height: 14, background: "rgba(255,255,255,0.1)", margin: "0 4px" }} />
+        <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          <Timer size={10} style={{ color: "#EAB308" }} /> Aguardando (aberta)
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          <Zap size={10} style={{ color: "#10B981" }} /> Tempo de resposta
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          <Repeat2 size={10} style={{ color: "#F97316" }} /> Reincidente
         </span>
       </div>
 
