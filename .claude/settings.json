@@ -12,7 +12,19 @@
       "Bash(Measure-Object -Line)",
       "PowerShell(\\(Get-Content \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\\\\backend\\\\server.py\" | Measure-Object -Line\\).Lines)",
       "PowerShell(python -c \"import ast; ast.parse\\(open\\('c:/Users/MARLOS/Documents/RENATO/Saas-PCM/backend/server.py'\\).read\\(\\)\\); print\\('OK'\\)\" 2>&1)",
-      "PowerShell(python -c \"import ast; ast.parse\\(open\\('c:/Users/MARLOS/Documents/RENATO/Saas-PCM/backend/server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('c:/Users/MARLOS/Documents/RENATO/Saas-PCM/backend/server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "PowerShell(python -c \"import ast; ast.parse\\(open\\('c:/Users/MARLOS/Documents/RENATO/Saas-PCM/backend/server.py', encoding='utf-8'\\).read\\(\\)\\); print\\('server.py OK'\\)\")",
+      "PowerShell(git -C \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\" status --short)",
+      "PowerShell(git -C \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\" diff --stat)",
+      "PowerShell(git -C \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\" log --oneline -3)",
+      "PowerShell(git -C \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\" add backend/server.py frontend/src/lib/api.js frontend/src/pages/DashboardPage.jsx)",
+      "PowerShell(git -C \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\" push origin main 2>&1)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(grep -n \"custo\\\\|valor\\\\|financial\\\\|FinancialGuard\\\\|R\\\\$\\\\|DollarSign\" frontend/src/pages/OrdensServicoPage.jsx)",
+      "Bash(grep -n \"custo\\\\|valor\\\\|financial\\\\|R\\\\$\\\\|DollarSign\" frontend/src/pages/EquipamentosPage.jsx)",
+      "Bash(grep -n \"custo\\\\|valor\\\\|R\\\\$\" frontend/src/pages/RelatoriosPage.jsx)"
     ],
     "additionalDirectories": [
       "c:\\Users\\MARLOS\\.claude\\projects\\c--Users-MARLOS-Documents-RENATO-Saas-PCM\\memory"
