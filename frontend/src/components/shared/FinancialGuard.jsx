@@ -18,7 +18,7 @@ export function useFinancialAccess(setor = null) {
   const { user } = useAuth();
   if (!user) return 'none';
   const role = user.role;
-  if (role === 'admin') return 'full';
+  if (role === 'admin' || role === 'superusuario') return 'full';
   if (role === 'lider') {
     if (setor && user.setor && setor.toUpperCase() === user.setor.toUpperCase()) return 'full';
     return 'none';

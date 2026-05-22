@@ -91,6 +91,9 @@ export const getDashboardTendencia = (dias = 30) => api.get('/dashboard/tendenci
 // ─── Kanban ───────────────────────────────────────────────
 export const getKanban = () => api.get('/kanban');
 
+// ─── OS Ocorrências ───────────────────────────────────────
+export const addOcorrenciaOS = (id, descricao) => api.post(`/ordens-servico/${id}/ocorrencias`, { descricao });
+
 // ─── Equipamentos ─────────────────────────────────────────
 export const getEquipamentos = () => api.get('/equipamentos');
 export const getEquipamento = (id) => api.get(`/equipamentos/${id}`);
@@ -183,6 +186,14 @@ export const marcarTodasLidas = () => api.post('/notificacoes/ler-todas');
 
 // ─── Auth ──────────────────────────────────────────────────
 export const changePassword = (data) => api.post('/auth/change-password', data);
+export const setTechnicianSession = (sector, employee_id) => api.post('/auth/technician-session', { sector, employee_id });
+export const clearTechnicianSession = () => api.post('/auth/technician-logout-session');
+
+// ─── Superusuário (plataforma) ────────────────────────────
+export const getSuperuserEmpresas = () => api.get('/superuser/empresas');
+export const createSuperuserEmpresa = (data) => api.post('/superuser/empresas', data);
+export const updateSuperuserEmpresa = (orgId, data) => api.put(`/superuser/empresas/${orgId}`, data);
+export const getSuperuserDashboard = () => api.get('/superuser/dashboard');
 
 // ─── Seed Demo ────────────────────────────────────────────
 export const seedDemo = (reset = false) => api.post(`/seed-demo${reset ? '?reset=true' : ''}`);

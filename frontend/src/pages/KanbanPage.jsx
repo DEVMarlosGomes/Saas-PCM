@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { getKanban, updateOrdemServico } from "../lib/api";
+import { getKanban, updateOrdemServico, addOcorrenciaOS } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  Kanban, Lock, Loader2, AlertTriangle, RefreshCw, Clock, Repeat2, Timer, Zap,
+  Kanban, Lock, Loader2, RefreshCw, Clock, Repeat2, Timer, Zap,
+  MessageSquare, MapPin, Hash, User, X, Send, Package,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 
@@ -23,13 +24,47 @@ const TIPO_CONFIG = {
   preditiva:  { label: "Pd", color: "#8B5CF6" },
 };
 
+const GRUPO_COLORS = {
+  eletrico:   { color: "#F59E0B", bg: "rgba(245,158,11,0.12)" },
+  elétrico:   { color: "#F59E0B", bg: "rgba(245,158,11,0.12)" },
+  hidraulico: { color: "#3B82F6", bg: "rgba(59,130,246,0.12)" },
+  hidráulico: { color: "#3B82F6", bg: "rgba(59,130,246,0.12)" },
+  mecanico:   { color: "#8B5CF6", bg: "rgba(139,92,246,0.12)" },
+  mecânico:   { color: "#8B5CF6", bg: "rgba(139,92,246,0.12)" },
+};
+
 // Status transitions allowed from each status
 const VALID_TRANSITIONS = {
   aberta:             ["em_atendimento"],
-  em_atendimento:     ["aguardando_revisao"],
+  em_atendimento:     ["aguardando_peca", "aguardando_revisao"],
+  aguardando_peca:    ["em_atendimento"],
   aguardando_revisao: ["revisada"],
   revisada:           ["fechada"],
 };
+
+// SLA thresholds (minutes) by priority
+const SLA_MINUTOS = { critica: 15, alta: 30, media: 120, baixa: 480 };
+
+function fmtMin(min) {
+  if (min == null) return "—";
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}h${m}min` : `${h}h`;
+}
+
+function elapsedMin(iso) {
+  if (!iso) return 0;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+}
+
+function timeAgo(iso) {
+  if (!iso) return "";
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000 / 3600;
+  if (diff < 1) return "< 1h";
+  if (diff < 24) return `${Math.floor(diff)}h`;
+  return `${Math.floor(diff / 24)}d`;
+}
 
 // ─── UpgradeGate ─────────────────────────────────────────────────────────────
 
@@ -54,50 +89,151 @@ function UpgradeGate() {
   );
 }
 
-// SLA thresholds (minutes) by priority
-const SLA_MINUTOS = { critica: 15, alta: 30, media: 120, baixa: 480 };
+// ─── OccurrenceModal ─────────────────────────────────────────────────────────
 
-// Convert minutes to readable string
-function fmtMin(min) {
-  if (min == null) return "—";
-  if (min < 60) return `${min}min`;
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return m > 0 ? `${h}h${m}min` : `${h}h`;
-}
+function OccurrenceModal({ card, onClose, onSubmit }) {
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const textareaRef = useRef(null);
 
-// Time elapsed since an ISO string, in minutes
-function elapsedMin(iso) {
-  if (!iso) return 0;
-  return Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    setLoading(true);
+    const ok = await onSubmit(card.id, text.trim());
+    setLoading(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(0,0,0,0.65)", backdropFilter: "blur(3px)",
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "var(--aurix-bg-card, #0D1626)",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 14, padding: "24px 22px",
+          width: "100%", maxWidth: 420,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <p style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.9)", margin: 0 }}>
+              Registrar Ocorrência
+            </p>
+            <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", margin: "3px 0 0" }}>
+              OS #{card.numero} · {card.equipamento}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: "rgba(255,255,255,0.4)", padding: 4, lineHeight: 0,
+            }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Existing occurrences count */}
+        {card.occurrences_count > 0 && (
+          <div style={{
+            fontSize: 11, color: "rgba(255,255,255,0.35)", marginBottom: 12,
+            padding: "6px 10px", background: "rgba(255,255,255,0.04)",
+            borderRadius: 6, display: "flex", alignItems: "center", gap: 5,
+          }}>
+            <MessageSquare size={10} />
+            {card.occurrences_count} ocorrência{card.occurrences_count !== 1 ? "s" : ""} registrada{card.occurrences_count !== 1 ? "s" : ""}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            placeholder="Descreva a ocorrência observada..."
+            rows={4}
+            style={{
+              width: "100%", borderRadius: 8, resize: "vertical",
+              background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)",
+              color: "rgba(255,255,255,0.9)", padding: "10px 12px", fontSize: 13,
+              outline: "none", fontFamily: "inherit", lineHeight: 1.5,
+              boxSizing: "border-box",
+            }}
+          />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: "8px 16px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.12)",
+                background: "transparent", color: "rgba(255,255,255,0.5)",
+                fontSize: 13, cursor: "pointer", fontWeight: 600,
+              }}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !text.trim()}
+              style={{
+                padding: "8px 16px", borderRadius: 8, border: "none",
+                background: loading || !text.trim() ? "rgba(26,111,232,0.4)" : "#1A6FE8",
+                color: "#fff", fontSize: 13, cursor: loading || !text.trim() ? "not-allowed" : "pointer",
+                fontWeight: 700, display: "flex", alignItems: "center", gap: 6,
+              }}
+            >
+              <Send size={13} />
+              {loading ? "Salvando..." : "Registrar"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 // ─── KanbanCard ──────────────────────────────────────────────────────────────
 
-function KanbanCard({ card, onDragStart }) {
+function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
   const prio = PRIORIDADE_CONFIG[card.prioridade] || PRIORIDADE_CONFIG.media;
   const tipo = TIPO_CONFIG[card.tipo] || TIPO_CONFIG.corretiva;
 
-  function timeAgo(iso) {
-    if (!iso) return "";
-    const diff = (Date.now() - new Date(iso).getTime()) / 1000 / 3600;
-    if (diff < 1) return "< 1h";
-    if (diff < 24) return `${Math.floor(diff)}h`;
-    return `${Math.floor(diff / 24)}d`;
-  }
+  // Live downtime timer (updates every minute)
+  const [liveDowntime, setLiveDowntime] = useState(() => elapsedMin(card.downtime_start));
+  useEffect(() => {
+    if (!card.downtime_start) return;
+    const id = setInterval(() => setLiveDowntime(elapsedMin(card.downtime_start)), 60000);
+    return () => clearInterval(id);
+  }, [card.downtime_start]);
 
-  // ── Response time badge ──────────────────────────────────────────────────
-  // cards still "aberta": show waiting time + SLA pressure color
-  // cards already attended: show actual tempo_resposta + SLA result color
+  // SLA progress
+  const slaLimit = SLA_MINUTOS[card.prioridade] ?? 120;
+  const slaElapsed = elapsedMin(card.created_at);
+  const slaRatio = Math.min(1, slaElapsed / slaLimit);
+  const slaBarColor = slaRatio >= 1 ? "#EF4444" : slaRatio >= 0.75 ? "#F97316" : "#10B981";
+
+  // Response time badge
   const isAberta = card.tempo_resposta == null;
-  const slaSecs = SLA_MINUTOS[card.prioridade] ?? 120;
-
   let responseLabel, responseColor, responseBg, ResponseIcon;
-
   if (isAberta) {
-    // Still waiting — show elapsed time since creation
-    const waitMin = elapsedMin(card.created_at);
-    const ratio = waitMin / slaSecs;
+    const waitMin = slaElapsed;
+    const ratio = waitMin / slaLimit;
     responseLabel = `Aguardando ${fmtMin(waitMin)}`;
     if (ratio >= 1) {
       responseColor = "#EF4444"; responseBg = "rgba(239,68,68,0.12)";
@@ -108,20 +244,23 @@ function KanbanCard({ card, onDragStart }) {
     }
     ResponseIcon = Timer;
   } else {
-    // Attended — show actual response time
     responseLabel = `Resp: ${fmtMin(card.tempo_resposta)}`;
-    if (card.dentro_sla !== false) {
-      responseColor = "#10B981"; responseBg = "rgba(16,185,129,0.10)";
-    } else {
-      responseColor = "#EF4444"; responseBg = "rgba(239,68,68,0.12)";
-    }
+    responseColor = card.dentro_sla !== false ? "#10B981" : "#EF4444";
+    responseBg = card.dentro_sla !== false ? "rgba(16,185,129,0.10)" : "rgba(239,68,68,0.12)";
     ResponseIcon = Zap;
   }
 
+  // Grupo badge
+  const grupoKey = (card.grupo_nome || "").toLowerCase();
+  const grupoStyle = GRUPO_COLORS[grupoKey] || { color: "#64748B", bg: "rgba(100,116,139,0.12)" };
+
+  const showDowntimeTimer = card.downtime_start != null;
+
   return (
     <div
-      draggable
+      draggable={canDrag}
       onDragStart={(e) => {
+        if (!canDrag) return;
         e.dataTransfer.effectAllowed = "move";
         onDragStart(card.id);
       }}
@@ -131,26 +270,35 @@ function KanbanCard({ card, onDragStart }) {
         borderLeft: `3px solid ${prio.color}`,
         borderRadius: "10px",
         padding: "12px 14px",
-        cursor: "grab",
+        cursor: canDrag ? "grab" : "default",
         userSelect: "none",
         transition: "box-shadow 0.15s, transform 0.15s",
         marginBottom: "8px",
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.boxShadow = "0 4px 20px rgba(0,0,0,0.3)";
-        e.currentTarget.style.transform = "translateY(-1px)";
+        if (canDrag) e.currentTarget.style.transform = "translateY(-1px)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.boxShadow = "none";
         e.currentTarget.style.transform = "none";
       }}
     >
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+      {/* Header row: numero + tipo + prioridade + grupo */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 7, flexWrap: "wrap", gap: 4 }}>
         <span style={{ fontSize: 10, fontFamily: "monospace", color: "rgba(255,255,255,0.4)" }}>
           #{card.numero}
         </span>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          {card.grupo_nome && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 4,
+              background: grupoStyle.bg, color: grupoStyle.color,
+              textTransform: "uppercase", letterSpacing: "0.04em",
+            }}>
+              {card.grupo_nome}
+            </span>
+          )}
           <span style={{
             fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 4,
             background: tipo.color + "22", color: tipo.color,
@@ -162,10 +310,27 @@ function KanbanCard({ card, onDragStart }) {
         </div>
       </div>
 
-      {/* Equipment */}
-      <p style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.9)", marginBottom: 4, lineHeight: 1.3 }}>
+      {/* Equipment name */}
+      <p style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.9)", marginBottom: 2, lineHeight: 1.3 }}>
         {card.equipamento}
       </p>
+
+      {/* Equipment code + localizacao */}
+      {(card.equipamento_codigo || card.equipamento_localizacao) && (
+        <p style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginBottom: 6, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 4 }}>
+          {card.equipamento_codigo && (
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+              <Hash size={9} />{card.equipamento_codigo}
+            </span>
+          )}
+          {card.equipamento_codigo && card.equipamento_localizacao && <span>·</span>}
+          {card.equipamento_localizacao && (
+            <span style={{ display: "flex", alignItems: "center", gap: 3 }}>
+              <MapPin size={9} />{card.equipamento_localizacao}
+            </span>
+          )}
+        </p>
+      )}
 
       {/* Description */}
       {card.descricao && (
@@ -174,12 +339,36 @@ function KanbanCard({ card, onDragStart }) {
         </p>
       )}
 
+      {/* SLA progress bar */}
+      <div style={{
+        height: 3, borderRadius: 2, background: "rgba(255,255,255,0.07)", marginBottom: 8, overflow: "hidden",
+      }}>
+        <div style={{
+          height: "100%", borderRadius: 2,
+          width: `${slaRatio * 100}%`,
+          background: slaBarColor,
+          transition: "width 1s linear",
+        }} />
+      </div>
+
+      {/* Live downtime timer */}
+      {showDowntimeTimer && (
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 4,
+          fontSize: 10, color: "#F97316", marginBottom: 8,
+          padding: "2px 7px", background: "rgba(249,115,22,0.1)",
+          border: "1px solid rgba(249,115,22,0.2)", borderRadius: 4,
+        }}>
+          <Package size={9} />
+          <span>Parado há {fmtMin(liveDowntime)}</span>
+        </div>
+      )}
+
       {/* Response time badge */}
       <div style={{
         display: "inline-flex", alignItems: "center", gap: 4,
         padding: "3px 8px", borderRadius: 6, marginBottom: 8,
-        background: responseBg,
-        border: `1px solid ${responseColor}33`,
+        background: responseBg, border: `1px solid ${responseColor}33`,
       }}>
         <ResponseIcon size={10} style={{ color: responseColor, flexShrink: 0 }} />
         <span style={{ fontSize: 10, fontWeight: 700, color: responseColor, letterSpacing: "0.01em" }}>
@@ -193,25 +382,69 @@ function KanbanCard({ card, onDragStart }) {
         )}
       </div>
 
-      {/* Footer */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+      {/* Footer: solicitante, tecnico, meta */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        {card.solicitante && (
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", display: "flex", alignItems: "center", gap: 4 }}>
+            <User size={9} style={{ flexShrink: 0 }} />
+            {card.solicitante}
+          </span>
+        )}
         {card.tecnico && (
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "flex", alignItems: "center", gap: 3 }}>
-            <span style={{ width: 14, height: 14, borderRadius: "50%", background: "#1A6FE822", border: "1px solid #1A6FE866", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: "#2E90FA", fontWeight: 700 }}>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{
+              width: 14, height: 14, borderRadius: "50%",
+              background: "#1A6FE822", border: "1px solid #1A6FE866",
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              fontSize: 8, color: "#2E90FA", fontWeight: 700, flexShrink: 0,
+            }}>
               {card.tecnico[0]}
             </span>
             {card.tecnico}
+            {card.tecnico_employee_id && (
+              <span style={{ color: "rgba(255,255,255,0.25)", fontFamily: "monospace" }}>
+                #{card.tecnico_employee_id}
+              </span>
+            )}
           </span>
         )}
-        {card.created_at && (
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginLeft: "auto", display: "flex", alignItems: "center", gap: 3 }}>
-            <Clock size={9} />
-            {timeAgo(card.created_at)}
-          </span>
-        )}
-        {card.reincidente && (
-          <span title="Reincidente" style={{ color: "#F97316" }}><Repeat2 size={11} /></span>
-        )}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+          {/* Occurrence counter */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onOccurrence(card); }}
+            title="Ver / registrar ocorrências"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              padding: "2px 7px", borderRadius: 5, cursor: "pointer",
+              background: (card.occurrences_count ?? 0) > 0
+                ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.05)",
+              border: (card.occurrences_count ?? 0) > 0
+                ? "1px solid rgba(139,92,246,0.3)" : "1px solid rgba(255,255,255,0.08)",
+              color: (card.occurrences_count ?? 0) > 0 ? "#8B5CF6" : "rgba(255,255,255,0.3)",
+              fontSize: 10, fontWeight: 600,
+            }}
+          >
+            <MessageSquare size={9} />
+            {card.occurrences_count ?? 0}
+          </button>
+
+          {/* Created at */}
+          {card.created_at && (
+            <span style={{
+              fontSize: 10, color: "rgba(255,255,255,0.3)",
+              marginLeft: "auto", display: "flex", alignItems: "center", gap: 3,
+            }}>
+              <Clock size={9} />
+              {timeAgo(card.created_at)}
+            </span>
+          )}
+
+          {/* Reincidente */}
+          {card.reincidente && (
+            <span title="Reincidente" style={{ color: "#F97316" }}><Repeat2 size={11} /></span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -219,12 +452,13 @@ function KanbanCard({ card, onDragStart }) {
 
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 
-function KanbanColumn({ column, onDrop, dragOverCol, onDragOver, onDragLeave, onDragStart }) {
+function KanbanColumn({ column, onDrop, dragOverCol, onDragOver, onDragLeave, onDragStart, canDrag, onOccurrence }) {
   const isOver = dragOverCol === column.id;
 
   const COL_COLORS = {
     aberta:             "#3B82F6",
     em_atendimento:     "#F59E0B",
+    aguardando_peca:    "#F97316",
     aguardando_revisao: "#8B5CF6",
     revisada:           "#10B981",
   };
@@ -236,9 +470,9 @@ function KanbanColumn({ column, onDrop, dragOverCol, onDragOver, onDragLeave, on
       onDragLeave={onDragLeave}
       onDrop={(e) => { e.preventDefault(); onDrop(column.id); }}
       style={{
-        minWidth: 260,
-        flex: "1 1 260px",
-        maxWidth: 320,
+        minWidth: 250,
+        flex: "1 1 250px",
+        maxWidth: 310,
         display: "flex",
         flexDirection: "column",
         background: isOver ? "rgba(26,111,232,0.05)" : "transparent",
@@ -279,7 +513,13 @@ function KanbanColumn({ column, onDrop, dragOverCol, onDragOver, onDragLeave, on
             Sem OS
           </div>
         ) : column.cards.map(card => (
-          <KanbanCard key={card.id} card={card} onDragStart={onDragStart} />
+          <KanbanCard
+            key={card.id}
+            card={card}
+            onDragStart={onDragStart}
+            canDrag={canDrag}
+            onOccurrence={onOccurrence}
+          />
         ))}
       </div>
     </div>
@@ -296,7 +536,10 @@ export default function KanbanPage() {
   const [dragCardId, setDragCardId] = useState(null);
   const [dragOverCol, setDragOverCol] = useState(null);
   const [moving, setMoving] = useState(false);
+  const [occurrenceModal, setOccurrenceModal] = useState(null); // { card }
   const dragLeaveTimer = useRef(null);
+
+  const canDrag = user?.role !== "operador";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -316,13 +559,33 @@ export default function KanbanPage() {
     load();
   }, [load, user]);
 
+  // ── occurrence handler ──
+
+  const handleOccurrence = useCallback((card) => {
+    setOccurrenceModal({ card });
+  }, []);
+
+  const handleOccurrenceSubmit = useCallback(async (osId, descricao) => {
+    try {
+      await addOcorrenciaOS(osId, descricao);
+      toast.success("Ocorrência registrada");
+      load();
+      return true;
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Erro ao registrar ocorrência");
+      return false;
+    }
+  }, [load]);
+
   // ── drag handlers ──
 
   function handleDragStart(cardId) {
+    if (!canDrag) return;
     setDragCardId(cardId);
   }
 
   function handleDragOver(colId) {
+    if (!canDrag) return;
     clearTimeout(dragLeaveTimer.current);
     setDragOverCol(colId);
   }
@@ -333,9 +596,8 @@ export default function KanbanPage() {
 
   async function handleDrop(targetColId) {
     setDragOverCol(null);
-    if (!dragCardId) return;
+    if (!dragCardId || !canDrag) return;
 
-    // Find source column
     let sourceColId = null;
     let card = null;
     for (const col of columns) {
@@ -345,7 +607,6 @@ export default function KanbanPage() {
 
     if (!card || sourceColId === targetColId) { setDragCardId(null); return; }
 
-    // Validate transition
     const allowed = VALID_TRANSITIONS[sourceColId] || [];
     if (!allowed.includes(targetColId)) {
       toast.warning(`Transição ${sourceColId} → ${targetColId} não permitida`);
@@ -354,19 +615,18 @@ export default function KanbanPage() {
     }
 
     setMoving(true);
-    // Optimistic update
     setColumns(prev => prev.map(col => {
       if (col.id === sourceColId) return { ...col, cards: col.cards.filter(c => c.id !== dragCardId) };
-      if (col.id === targetColId) return { ...col, cards: [{ ...card, prioridade: card.prioridade }, ...col.cards] };
+      if (col.id === targetColId) return { ...col, cards: [{ ...card }, ...col.cards] };
       return col;
     }));
 
     try {
       await updateOrdemServico(dragCardId, { status: targetColId });
-      toast.success(`OS #${card.numero} movida para "${targetColId.replace("_", " ")}"`);
+      toast.success(`OS #${card.numero} → "${targetColId.replace(/_/g, " ")}"`);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Erro ao mover OS");
-      load(); // revert
+      load();
     } finally {
       setMoving(false);
       setDragCardId(null);
@@ -386,60 +646,82 @@ export default function KanbanPage() {
   const total = columns.reduce((s, c) => s + c.cards.length, 0);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 112px)", gap: 16 }}
-      data-testid="kanban-page">
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Kanban className="h-6 w-6 text-primary" />
-          <div>
-            <h1 className="font-heading text-2xl font-bold">Kanban de OS</h1>
-            <p className="text-muted-foreground text-sm">{total} ordem{total !== 1 ? "s" : ""} ativa{total !== 1 ? "s" : ""} · Arraste para mover entre colunas</p>
+    <>
+      <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 112px)", gap: 16 }}
+        data-testid="kanban-page">
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Kanban className="h-6 w-6 text-primary" />
+            <div>
+              <h1 className="font-heading text-2xl font-bold">Kanban de OS</h1>
+              <p className="text-muted-foreground text-sm">
+                {total} ordem{total !== 1 ? "s" : ""} ativa{total !== 1 ? "s" : ""}
+                {canDrag ? " · Arraste para mover entre colunas" : " · Visualização (somente leitura)"}
+              </p>
+            </div>
           </div>
+          <Button variant="outline" size="sm" onClick={load} disabled={moving} className="h-9 gap-2">
+            <RefreshCw className={`h-3.5 w-3.5 ${moving ? "animate-spin" : ""}`} />
+            Atualizar
+          </Button>
         </div>
-        <Button variant="outline" size="sm" onClick={load} disabled={moving} className="h-9 gap-2">
-          <RefreshCw className={`h-3.5 w-3.5 ${moving ? "animate-spin" : ""}`} />
-          Atualizar
-        </Button>
-      </div>
 
-      {/* Legend */}
-      <div style={{ display: "flex", gap: 16, flexShrink: 0, flexWrap: "wrap", alignItems: "center" }}>
-        {Object.entries(PRIORIDADE_CONFIG).map(([k, v]) => (
-          <span key={k} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: v.color }} />
-            {v.label}
+        {/* Legend */}
+        <div style={{ display: "flex", gap: 16, flexShrink: 0, flexWrap: "wrap", alignItems: "center" }}>
+          {Object.entries(PRIORIDADE_CONFIG).map(([k, v]) => (
+            <span key={k} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "rgba(255,255,255,0.5)" }}>
+              <span style={{ width: 8, height: 8, borderRadius: 2, background: v.color }} />
+              {v.label}
+            </span>
+          ))}
+          <span style={{ width: 1, height: 14, background: "rgba(255,255,255,0.1)", margin: "0 4px" }} />
+          <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            <Timer size={10} style={{ color: "#EAB308" }} /> Aguardando (aberta)
           </span>
-        ))}
-        <span style={{ width: 1, height: 14, background: "rgba(255,255,255,0.1)", margin: "0 4px" }} />
-        <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-          <Timer size={10} style={{ color: "#EAB308" }} /> Aguardando (aberta)
-        </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-          <Zap size={10} style={{ color: "#10B981" }} /> Tempo de resposta
-        </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-          <Repeat2 size={10} style={{ color: "#F97316" }} /> Reincidente
-        </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            <Zap size={10} style={{ color: "#10B981" }} /> Tempo de resposta
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            <Package size={10} style={{ color: "#F97316" }} /> Parado (downtime)
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            <Repeat2 size={10} style={{ color: "#F97316" }} /> Reincidente
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            <MessageSquare size={10} style={{ color: "#8B5CF6" }} /> Ocorrências
+          </span>
+        </div>
+
+        {/* Board */}
+        <div style={{
+          display: "flex", gap: 12, flex: 1, overflowX: "auto", overflowY: "hidden",
+          paddingBottom: 8,
+        }}>
+          {columns.map(col => (
+            <KanbanColumn
+              key={col.id}
+              column={col}
+              onDrop={handleDrop}
+              dragOverCol={dragOverCol}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDragStart={handleDragStart}
+              canDrag={canDrag}
+              onOccurrence={handleOccurrence}
+            />
+          ))}
+        </div>
       </div>
 
-      {/* Board */}
-      <div style={{
-        display: "flex", gap: 12, flex: 1, overflowX: "auto", overflowY: "hidden",
-        paddingBottom: 8,
-      }}>
-        {columns.map(col => (
-          <KanbanColumn
-            key={col.id}
-            column={col}
-            onDrop={handleDrop}
-            dragOverCol={dragOverCol}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDragStart={handleDragStart}
-          />
-        ))}
-      </div>
-    </div>
+      {/* Occurrence modal */}
+      {occurrenceModal && (
+        <OccurrenceModal
+          card={occurrenceModal.card}
+          onClose={() => setOccurrenceModal(null)}
+          onSubmit={handleOccurrenceSubmit}
+        />
+      )}
+    </>
   );
 }

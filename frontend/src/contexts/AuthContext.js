@@ -54,6 +54,7 @@ function readStoredUser() {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [needsTechnicianSession, setNeedsTechnicianSession] = useState(false);
 
   const checkAuth = useCallback(async () => {
     const storedUser  = readStoredUser();
@@ -66,6 +67,7 @@ export const AuthProvider = ({ children }) => {
           headers: { Authorization: `Bearer ${storedToken}` },
         });
         setUser(data);
+        setNeedsTechnicianSession(!!data.needs_technician_session);
         setLoading(false);
         return;
       } catch {
@@ -92,7 +94,30 @@ export const AuthProvider = ({ children }) => {
       }
       localStorage.setItem(USER_KEY, JSON.stringify(data));
       setUser(data);
+      setNeedsTechnicianSession(!!data.needs_technician_session);
       setLoading(false);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: formatRequestError(e) };
+    }
+  };
+
+  const completeTechnicianSession = async (sector, employeeId) => {
+    try {
+      const token = readStoredToken();
+      const { data } = await axios.post(
+        `${API}/api/auth/technician-session`,
+        { sector, employee_id: employeeId },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+      );
+      const newToken = data.access_token || data.token;
+      if (newToken) {
+        setAccessToken(newToken);
+        localStorage.setItem(TOKEN_KEY, newToken);
+      }
+      localStorage.setItem(USER_KEY, JSON.stringify(data));
+      setUser(data);
+      setNeedsTechnicianSession(false);
       return { success: true };
     } catch (e) {
       return { success: false, error: formatRequestError(e) };
@@ -133,6 +158,17 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('pcm_user');
     setAccessToken(null);
     setUser(false);
+    setNeedsTechnicianSession(false);
+  };
+
+  const endTechnicianSession = async () => {
+    try {
+      const token = readStoredToken();
+      await axios.post(`${API}/api/auth/technician-logout-session`, {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch { /* ignore */ }
+    await checkAuth();
   };
 
   const refreshToken = async () => {
@@ -158,7 +194,8 @@ export const AuthProvider = ({ children }) => {
     <AuthContext.Provider value={{
       user, loading,
       isAuthenticated: !!user && user !== false,
-      login, register, logout, refreshToken, checkAuth,
+      needsTechnicianSession,
+      login, register, logout, refreshToken, checkAuth, completeTechnicianSession, endTechnicianSession,
     }}>
       {children}
     </AuthContext.Provider>

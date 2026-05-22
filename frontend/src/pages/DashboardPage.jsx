@@ -208,6 +208,7 @@ export default function DashboardPage() {
   }, []);
 
   const [seedCreds, setSeedCreds] = useState(null);
+  const finAccess = useFinancialAccess();
 
   const handleSeedDemo = async (reset = false) => {
     setSeeding(true);
@@ -261,8 +262,6 @@ export default function DashboardPage() {
       </div>
     );
   }
-
-  const finAccess = useFinancialAccess(); // no setor = org-wide; lider gets 'none'
 
   const pvc = kpis?.preventiva_vs_corretiva || {};
   const pieData = [
@@ -448,9 +447,10 @@ export default function DashboardPage() {
             <span className="text-xs text-muted-foreground font-medium">pendentes</span>
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-border/30">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-border/30">
           <StatusBadge value={backlog?.abertas || 0} label="Abertas" color="warning" icon={XCircle} />
           <StatusBadge value={backlog?.em_atendimento || 0} label="Em Atendimento" color="info" icon={Wrench} />
+          <StatusBadge value={backlog?.aguardando_peca || 0} label="Ag. Peça" color="warning" icon={Timer} />
           <StatusBadge value={backlog?.aguardando_revisao || 0} label="Ag. Revisão" color="info" icon={ShieldCheck} />
           <StatusBadge value={backlog?.atrasadas || 0} label="Atrasadas" color="danger" icon={AlertTriangle} />
         </div>

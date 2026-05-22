@@ -66,6 +66,7 @@ SMTP_FROM = os.environ.get("SMTP_FROM", "noreply@aurix.com.br")
 
 # ========== ENUMS ==========
 class UserRole(str, enum.Enum):
+    SUPERUSUARIO = "superusuario"
     ADMIN = "admin"
     LIDER = "lider"
     TECNICO = "tecnico"
@@ -85,6 +86,7 @@ class PrioridadeOS(str, enum.Enum):
 class StatusOS(str, enum.Enum):
     ABERTA = "aberta"
     EM_ATENDIMENTO = "em_atendimento"
+    AGUARDANDO_PECA = "aguardando_peca"
     AGUARDANDO_REVISAO = "aguardando_revisao"
     REVISADA = "revisada"
     FECHADA = "fechada"
@@ -189,8 +191,10 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     nome = Column(String(255), nullable=False)
     role = Column(SQLEnum(UserRole), default=UserRole.OPERADOR)
-    setor = Column(String(100), nullable=True)    # ex: "MECANICA", "TI", "ELETRICA"
-    is_lider = Column(Boolean, default=False)     # True = líder do setor, recebe aprovações
+    setor = Column(String(100), nullable=True)
+    is_lider = Column(Boolean, default=False)
+    employee_id = Column(String(20), nullable=True)           # matrícula (obrigatório para técnico)
+    generic_session_sector = Column(String(100), nullable=True)  # setor selecionado no login genérico
     ativo = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -276,12 +280,17 @@ class OrdemServico(Base):
     
     # Bloco de parada
     bloco_parada_id = Column(UUID(as_uuid=True), nullable=True)
-    
+
+    # Spec v2: novos campos
+    downtime_start = Column(DateTime(timezone=True), nullable=True)          # início da parada
+    occurrences = Column(Text, nullable=True)                                # JSON: log de ocorrências do operador
+    technician_employee_id = Column(String(20), nullable=True)               # matrícula do técnico responsável
+
     # Review workflow
     review_deadline = Column(DateTime(timezone=True), nullable=True)
     review_notes = Column(Text, nullable=True)
     auto_approved = Column(Boolean, default=False)
-    
+
     __table_args__ = (Index('idx_os_org', 'organization_id'),)
 
 class CustoOS(Base):
@@ -457,6 +466,8 @@ class UserResponse(BaseModel):
     role: str
     setor: Optional[str] = None
     is_lider: bool = False
+    employee_id: Optional[str] = None
+    generic_session_sector: Optional[str] = None
     organization_id: str
     ativo: bool
     created_at: datetime
@@ -470,6 +481,11 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.OPERADOR
     setor: Optional[str] = None
     is_lider: bool = False
+    employee_id: Optional[str] = None
+
+class TechnicianSessionRequest(BaseModel):
+    sector: str
+    employee_id: str
 
 class GrupoCreate(BaseModel):
     nome: str
@@ -535,6 +551,7 @@ class OSCreate(BaseModel):
     falha_tipo: Optional[str] = None
     falha_modo: Optional[str] = None
     falha_causa: Optional[str] = None
+    failure_group: Optional[str] = None  # grupo de falha textual (ELETRICO, HIDRAULICO, MECANICO)
 
 class OSUpdate(BaseModel):
     status: Optional[StatusOS] = None
@@ -550,7 +567,10 @@ class OSResponse(BaseModel):
     numero: int
     equipamento_id: str
     equipamento_nome: Optional[str] = None
+    equipamento_codigo: Optional[str] = None
+    equipamento_localizacao: Optional[str] = None
     grupo_id: Optional[str]
+    grupo_nome: Optional[str] = None
     subgrupo_id: Optional[str]
     tipo: str
     prioridade: str
@@ -558,12 +578,17 @@ class OSResponse(BaseModel):
     descricao: str
     solucao: Optional[str]
     solicitante_id: str
+    solicitante_nome: Optional[str] = None
     tecnico_id: Optional[str]
+    tecnico_nome: Optional[str] = None
+    tecnico_employee_id: Optional[str] = None
+    technician_employee_id: Optional[str] = None
     revisor_id: Optional[str]
     revisor_nome: Optional[str] = None
     created_at: datetime
     inicio_atendimento: Optional[datetime]
     fim_atendimento: Optional[datetime]
+    downtime_start: Optional[datetime] = None
     tempo_resposta: Optional[int]
     tempo_reparo: Optional[int]
     tempo_total: Optional[int]
@@ -571,14 +596,17 @@ class OSResponse(BaseModel):
     falha_tipo: Optional[str]
     falha_modo: Optional[str]
     falha_causa: Optional[str]
+    failure_group: Optional[str] = None
     reincidente: bool
+    occurrences: Optional[str] = None
+    occurrences_count: int = 0
     organization_id: str
     custo_parada: Optional[float] = None
     equipamento_setor: Optional[str] = None
     review_deadline: Optional[datetime] = None
     review_notes: Optional[str] = None
     auto_approved: bool = False
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 class CustoCreate(BaseModel):
@@ -667,6 +695,17 @@ def ensure_database_schema():
             "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS mttr_horas FLOAT",
             "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS mtbf_horas FLOAT",
             "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS disponibilidade_percent FLOAT",
+            # Spec v2 — users
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id VARCHAR(20)",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS generic_session_sector VARCHAR(100)",
+            # Spec v2 — ordens_servico
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS downtime_start TIMESTAMPTZ",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS occurrences TEXT",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS technician_employee_id VARCHAR(20)",
+            # Spec v2 — UserRole enum extension (superusuario)
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'superusuario' BEFORE 'admin'",
+            # Spec v2 — StatusOS enum extension (aguardando_peca)
+            "ALTER TYPE statusos ADD VALUE IF NOT EXISTS 'aguardando_peca' BEFORE 'aguardando_revisao'",
         ]
         try:
             from sqlalchemy import text as sa_text
@@ -1231,19 +1270,37 @@ def check_plan_limit(db: Session, org: Organization, resource: str) -> tuple:
 
 def build_os_response(o, db: Session, user=None) -> OSResponse:
     """Build OSResponse with computed custo_parada, setor, and enriched names."""
+    import json as _json
     from sqlalchemy import text as _sa_text
     custo_parada = None
     equipamento_nome = None
+    equipamento_codigo = None
+    equipamento_localizacao = None
     equipamento_setor = None
     equip = db.query(Equipamento).filter(Equipamento.id == o.equipamento_id).first()
     if equip:
         equipamento_nome = equip.nome
+        equipamento_codigo = equip.codigo
+        equipamento_localizacao = equip.localizacao
         if o.tempo_total and equip.valor_hora:
             custo_parada = round((o.tempo_total / 60) * equip.valor_hora, 2)
-        # setor is not mapped in ORM — fetch via raw SQL
         row = db.execute(_sa_text("SELECT setor FROM equipamentos WHERE id = :id"),
                          {"id": str(equip.id)}).fetchone()
         equipamento_setor = row[0] if row else None
+
+    solicitante_nome = None
+    if o.solicitante_id:
+        sol = db.query(User).filter(User.id == o.solicitante_id).first()
+        if sol:
+            solicitante_nome = sol.nome
+
+    tecnico_nome = None
+    tecnico_emp_id = None
+    if o.tecnico_id:
+        tec = db.query(User).filter(User.id == o.tecnico_id).first()
+        if tec:
+            tecnico_nome = tec.nome
+            tecnico_emp_id = tec.employee_id
 
     revisor_nome = None
     if o.revisor_id:
@@ -1251,11 +1308,22 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
         if revisor:
             revisor_nome = revisor.nome
 
-    # Financial visibility:
-    # ADMIN       → full custo_parada
-    # LIDER       → custo_parada only for own setor
-    # TECNICO/OPERADOR → custo_parada = None
-    if user is not None and user.role != UserRole.ADMIN:
+    grupo_nome = None
+    if o.grupo_id:
+        grp = db.query(Grupo).filter(Grupo.id == o.grupo_id).first()
+        if grp:
+            grupo_nome = grp.nome
+
+    # occurrences count
+    occ_raw = getattr(o, "occurrences", None)
+    try:
+        occ_list = _json.loads(occ_raw) if occ_raw else []
+    except Exception:
+        occ_list = []
+    occurrences_count = len(occ_list)
+
+    # Financial visibility: ADMIN/SUPERUSUARIO → full; LIDER → own setor; TECNICO/OPERADOR → none
+    if user is not None and user.role not in (UserRole.ADMIN, UserRole.SUPERUSUARIO):
         if user.role == UserRole.LIDER:
             if equipamento_setor and user.setor and equipamento_setor.upper() != user.setor.upper():
                 custo_parada = None
@@ -1265,21 +1333,34 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
     return OSResponse(
         id=str(o.id), numero=o.numero, equipamento_id=str(o.equipamento_id),
         equipamento_nome=equipamento_nome,
+        equipamento_codigo=equipamento_codigo,
+        equipamento_localizacao=equipamento_localizacao,
         equipamento_setor=equipamento_setor,
         grupo_id=str(o.grupo_id) if o.grupo_id else None,
+        grupo_nome=grupo_nome,
         subgrupo_id=str(o.subgrupo_id) if o.subgrupo_id else None,
         tipo=o.tipo.value, prioridade=o.prioridade.value, status=o.status.value,
         descricao=o.descricao, solucao=o.solucao,
         solicitante_id=str(o.solicitante_id),
+        solicitante_nome=solicitante_nome,
         tecnico_id=str(o.tecnico_id) if o.tecnico_id else None,
+        tecnico_nome=tecnico_nome,
+        tecnico_employee_id=tecnico_emp_id,
+        technician_employee_id=getattr(o, "technician_employee_id", None),
         revisor_id=str(o.revisor_id) if o.revisor_id else None,
         revisor_nome=revisor_nome,
         created_at=o.created_at, inicio_atendimento=o.inicio_atendimento,
-        fim_atendimento=o.fim_atendimento, tempo_resposta=o.tempo_resposta,
+        fim_atendimento=o.fim_atendimento,
+        downtime_start=getattr(o, "downtime_start", None),
+        tempo_resposta=o.tempo_resposta,
         tempo_reparo=o.tempo_reparo, tempo_total=o.tempo_total,
         dentro_sla=o.dentro_sla, falha_tipo=o.falha_tipo,
         falha_modo=o.falha_modo, falha_causa=o.falha_causa,
-        reincidente=o.reincidente, organization_id=str(o.organization_id),
+        failure_group=getattr(o, "failure_group", None),
+        reincidente=o.reincidente,
+        occurrences=occ_raw,
+        occurrences_count=occurrences_count,
+        organization_id=str(o.organization_id),
         custo_parada=custo_parada,
         review_deadline=o.review_deadline,
         review_notes=o.review_notes,
@@ -1401,9 +1482,12 @@ async def login(data: UserLogin, request: Request, response: Response, db: Sessi
         "role": user.role.value,
         "setor": user.setor,
         "is_lider": user.is_lider or False,
+        "employee_id": user.employee_id,
+        "generic_session_sector": user.generic_session_sector,
         "organization_id": str(user.organization_id),
         "ativo": user.ativo,
         "access_token": access_token,
+        "needs_technician_session": user.role == UserRole.TECNICO and not user.generic_session_sector,
     }
 
 @api_router.post("/auth/logout")
@@ -1432,10 +1516,13 @@ async def get_me(user: User = Depends(get_current_user), db: Session = Depends(g
         "role": user.role.value,
         "setor": user.setor,
         "is_lider": user.is_lider or False,
+        "employee_id": user.employee_id,
+        "generic_session_sector": user.generic_session_sector,
         "organization_id": str(user.organization_id),
         "ativo": user.ativo,
         "org_plano": org.plano.value if org else "demo",
         "features": features,
+        "needs_technician_session": user.role == UserRole.TECNICO and not user.generic_session_sector,
     }
 
 @api_router.post("/auth/refresh")
@@ -1479,6 +1566,78 @@ async def refresh_token(request: Request, response: Response, db: Session = Depe
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
+# ========== TECHNICIAN SESSION ==========
+@api_router.post("/auth/technician-session")
+async def set_technician_session(
+    data: TechnicianSessionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Segunda etapa do login genérico do técnico.
+    Associa sector + matrícula funcional à sessão atual.
+    O banco armazena generic_session_sector e employee_id para auditoria.
+    """
+    if user.role != UserRole.TECNICO:
+        raise HTTPException(status_code=403, detail="Apenas técnicos precisam desta etapa de login.")
+    if not data.sector.strip():
+        raise HTTPException(status_code=400, detail="Setor obrigatório.")
+    if not data.employee_id.strip():
+        raise HTTPException(status_code=400, detail="Matrícula obrigatória.")
+
+    user.generic_session_sector = data.sector.strip().upper()
+    user.employee_id = data.employee_id.strip()
+    db.commit()
+    db.refresh(user)
+
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    limits = PLAN_LIMITS.get(org.plano if org else PlanoSaaS.DEMO, PLAN_LIMITS[PlanoSaaS.DEMO])
+    features = {
+        "modulo_preditivo": limits.get("modulo_preditivo", False),
+        "planos_preventivos": limits.get("planos_preventivos", False),
+        "relatorios": limits.get("relatorios", False),
+        "dashboard_avancado": limits.get("dashboard_avancado", False),
+        "aprovacao_setor": limits.get("aprovacao_setor", False),
+        "exportacao_pdf": limits.get("exportacao_pdf", False),
+        "kanban": limits.get("kanban", False),
+    }
+
+    create_audit_log(
+        db, str(user.organization_id), str(user.id), "user", str(user.id),
+        "technician_session",
+        dados_novos=f'{{"sector": "{user.generic_session_sector}", "employee_id": "{user.employee_id}"}}',
+    )
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "nome": user.nome,
+        "role": user.role.value,
+        "setor": user.setor,
+        "is_lider": user.is_lider or False,
+        "employee_id": user.employee_id,
+        "generic_session_sector": user.generic_session_sector,
+        "organization_id": str(user.organization_id),
+        "ativo": user.ativo,
+        "org_plano": org.plano.value if org else "demo",
+        "features": features,
+        "needs_technician_session": False,
+    }
+
+
+@api_router.post("/auth/technician-logout-session")
+async def clear_technician_session(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Limpa a sessão genérica do técnico (logout de turno)."""
+    if user.role != UserRole.TECNICO:
+        raise HTTPException(status_code=403, detail="Apenas técnicos.")
+    user.generic_session_sector = None
+    db.commit()
+    return {"message": "Sessão de turno encerrada."}
+
+
 # ========== USERS ENDPOINTS ==========
 @api_router.get("/users", response_model=List[UserResponse])
 async def list_users(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1488,6 +1647,8 @@ async def list_users(user: User = Depends(get_current_user), db: Session = Depen
     return [UserResponse(
         id=str(u.id), email=u.email, nome=u.nome, role=u.role.value,
         setor=u.setor, is_lider=u.is_lider or False,
+        employee_id=u.employee_id,
+        generic_session_sector=u.generic_session_sector,
         organization_id=str(u.organization_id), ativo=u.ativo, created_at=u.created_at,
     ) for u in users]
 
@@ -1513,6 +1674,7 @@ async def create_user(data: UserCreate, user: User = Depends(get_current_user), 
         role=data.role,
         setor=data.setor,
         is_lider=data.is_lider,
+        employee_id=data.employee_id,
         organization_id=user.organization_id,
     )
     db.add(new_user)
@@ -1522,6 +1684,8 @@ async def create_user(data: UserCreate, user: User = Depends(get_current_user), 
     return UserResponse(
         id=str(new_user.id), email=new_user.email, nome=new_user.nome, role=new_user.role.value,
         setor=new_user.setor, is_lider=new_user.is_lider or False,
+        employee_id=new_user.employee_id,
+        generic_session_sector=new_user.generic_session_sector,
         organization_id=str(new_user.organization_id), ativo=new_user.ativo, created_at=new_user.created_at,
     )
 
@@ -1530,6 +1694,7 @@ class UserUpdate(BaseModel):
     role: Optional[UserRole] = None
     setor: Optional[str] = None
     is_lider: Optional[bool] = None
+    employee_id: Optional[str] = None
     ativo: Optional[bool] = None
 
 @api_router.put("/users/{user_id}", response_model=UserResponse)
@@ -1556,6 +1721,8 @@ async def update_user(user_id: str, data: UserUpdate, user: User = Depends(get_c
         target_user.setor = data.setor
     if data.is_lider is not None:
         target_user.is_lider = data.is_lider
+    if data.employee_id is not None:
+        target_user.employee_id = data.employee_id
     if data.ativo is not None:
         if str(target_user.id) == str(user.id) and not data.ativo:
             raise HTTPException(status_code=400, detail="Você não pode desativar sua própria conta")
@@ -1568,6 +1735,8 @@ async def update_user(user_id: str, data: UserUpdate, user: User = Depends(get_c
     return UserResponse(
         id=str(target_user.id), email=target_user.email, nome=target_user.nome, role=target_user.role.value,
         setor=target_user.setor, is_lider=target_user.is_lider or False,
+        employee_id=target_user.employee_id,
+        generic_session_sector=target_user.generic_session_sector,
         organization_id=str(target_user.organization_id), ativo=target_user.ativo, created_at=target_user.created_at,
     )
 
@@ -2011,7 +2180,7 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
     allowed, msg = check_plan_limit(db, org, "os")
     if not allowed:
         raise HTTPException(status_code=402, detail=msg)
-    
+
     # Verify equipment exists
     equipamento = db.query(Equipamento).filter(
         Equipamento.id == data.equipamento_id,
@@ -2019,9 +2188,30 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
     ).first()
     if not equipamento:
         raise HTTPException(status_code=404, detail="Equipamento não encontrado")
-    
+
+    # ── Spec 3.2.1: bloqueio por grupo de falha ─────────────────────────────
+    # O operador não pode abrir nova OS do mesmo grupo quando já existe uma em aberto.
+    grupo_alvo = data.grupo_id or str(equipamento.grupo_id) if equipamento.grupo_id else None
+    if grupo_alvo and user.role in (UserRole.OPERADOR, UserRole.TECNICO):
+        os_aberta_mesmo_grupo = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == user.organization_id,
+            OrdemServico.equipamento_id == data.equipamento_id,
+            OrdemServico.grupo_id == grupo_alvo,
+            OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA]),
+        ).first()
+        if os_aberta_mesmo_grupo:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Equipamento já possui OS #{os_aberta_mesmo_grupo.numero} em aberto "
+                    f"para o mesmo grupo de falha. Para reportar uma falha diferente, "
+                    f"selecione outro grupo."
+                ),
+            )
+
     numero = get_next_os_number(db, str(user.organization_id))
-    
+    now = datetime.now(timezone.utc)
+
     os = OrdemServico(
         numero=numero,
         equipamento_id=data.equipamento_id,
@@ -2034,16 +2224,17 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
         falha_modo=data.falha_modo,
         falha_causa=data.falha_causa,
         solicitante_id=user.id,
-        organization_id=user.organization_id
+        organization_id=user.organization_id,
+        downtime_start=now,  # início da parada registrado na abertura
     )
-    
+
     # Check reincidência
     os.reincidente = check_reincidencia(db, str(user.organization_id), data.equipamento_id, data.falha_tipo)
-    
+
     db.add(os)
     db.commit()
     db.refresh(os)
-    
+
     create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os.id), "create")
 
     return build_os_response(os, db, user=user)
@@ -2078,7 +2269,18 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
                 os.tecnico_id = data.tecnico_id
             elif user.role in [UserRole.TECNICO, UserRole.LIDER]:
                 os.tecnico_id = user.id
-        
+            # Registrar matrícula do técnico
+            if user.role == UserRole.TECNICO and user.employee_id:
+                os.technician_employee_id = user.employee_id
+
+        elif data.status == StatusOS.AGUARDANDO_PECA and old_status == StatusOS.EM_ATENDIMENTO:
+            # Técnico aguarda peça — OS permanece com ele, downtime continua
+            pass
+
+        elif data.status == StatusOS.EM_ATENDIMENTO and old_status == StatusOS.AGUARDANDO_PECA:
+            # Retorno ao atendimento após chegada de peça
+            pass
+
         elif data.status == StatusOS.AGUARDANDO_REVISAO:
             os.fim_atendimento = now
             if os.inicio_atendimento:
@@ -2247,6 +2449,79 @@ async def get_os(os_id: str, user: User = Depends(get_current_user), db: Session
         raise HTTPException(status_code=404, detail="OS não encontrada")
     return build_os_response(os, db, user=user)
 
+
+class OcorrenciaCreate(BaseModel):
+    descricao: str
+
+
+@api_router.post("/ordens-servico/{os_id}/ocorrencias", response_model=OSResponse)
+async def add_ocorrencia(
+    os_id: str,
+    data: OcorrenciaCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Spec 3.2.2 — O operador adiciona uma nova ocorrência de falha à OS.
+    Adiciona registro com timestamp sem sobrescrever o original.
+    Notifica o técnico atribuído.
+    """
+    import json as _json
+
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+
+    if os_obj.status == StatusOS.FECHADA:
+        raise HTTPException(status_code=400, detail="Não é possível adicionar ocorrências a uma OS fechada.")
+
+    # Apenas operador, tecnico, lider e admin podem adicionar ocorrências
+    if user.role not in (UserRole.OPERADOR, UserRole.TECNICO, UserRole.LIDER, UserRole.ADMIN):
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+
+    now = datetime.now(timezone.utc)
+    nova_ocorrencia = {
+        "timestamp": now.isoformat(),
+        "descricao": data.descricao.strip(),
+        "user_id": str(user.id),
+        "user_nome": user.nome,
+        "employee_id": user.employee_id,
+    }
+
+    try:
+        ocorrencias = _json.loads(os_obj.occurrences) if os_obj.occurrences else []
+    except Exception:
+        ocorrencias = []
+
+    ocorrencias.append(nova_ocorrencia)
+    os_obj.occurrences = _json.dumps(ocorrencias, ensure_ascii=False)
+    db.commit()
+
+    # Notificar técnico atribuído
+    if os_obj.tecnico_id:
+        criar_notificacao(
+            db,
+            org_id=os_obj.organization_id,
+            destinatario_id=os_obj.tecnico_id,
+            tipo="nova_ocorrencia",
+            titulo=f"Nova ocorrência na OS #{os_obj.numero}",
+            mensagem=f"{user.nome} adicionou: {data.descricao[:100]}",
+            os_id=os_obj.id,
+        )
+
+    create_audit_log(
+        db, str(user.organization_id), str(user.id), "ordem_servico", str(os_obj.id),
+        "add_ocorrencia",
+        dados_novos=_json.dumps(nova_ocorrencia, ensure_ascii=False),
+    )
+
+    db.refresh(os_obj)
+    return build_os_response(os_obj, db, user=user)
+
+
 # ========== CUSTOS ENDPOINTS ==========
 @api_router.get("/custos", response_model=List[CustoResponse])
 async def list_custos(ordem_servico_id: Optional[str] = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -2383,68 +2658,76 @@ async def executar_plano(plano_id: str, user: User = Depends(get_current_user), 
 # ========== DASHBOARD / INDICADORES ==========
 @api_router.get("/dashboard/kpis", response_model=DashboardKPIs)
 async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from sqlalchemy import text as _sa_text
     org_id = user.organization_id
     now = datetime.now(timezone.utc)
     first_day_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    
+
+    # ── Spec §3 / §4: escopo por setor para OPERADOR e LIDER ─────────────────
+    # Determinar IDs de equipamentos no setor do usuário
+    setor_equip_ids = None
+    setor_usuario = user.setor or (user.generic_session_sector if user.role == UserRole.TECNICO else None)
+    if user.role in (UserRole.OPERADOR, UserRole.LIDER) and setor_usuario:
+        rows = db.execute(
+            _sa_text("SELECT id FROM equipamentos WHERE organization_id = :org AND setor = :setor AND ativo = TRUE"),
+            {"org": str(org_id), "setor": setor_usuario},
+        ).fetchall()
+        setor_equip_ids = [r[0] for r in rows]
+
+    def _os_query():
+        q = db.query(OrdemServico).filter(OrdemServico.organization_id == org_id)
+        if setor_equip_ids is not None:
+            q = q.filter(OrdemServico.equipamento_id.in_(setor_equip_ids))
+        return q
+
     # Total OS do mês
-    total_os_mes = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
+    total_os_mes = _os_query().filter(
         OrdemServico.created_at >= first_day_month
     ).count()
     
     # OS abertas
-    os_abertas = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO])
+    os_abertas = _os_query().filter(
+        OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA])
     ).count()
-    
+
     # OS atrasadas (fora do SLA)
-    os_atrasadas = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.dentro_sla == False
-    ).count()
-    
+    os_atrasadas = _os_query().filter(OrdemServico.dentro_sla == False).count()
+
     # MTTR (Mean Time To Repair) - média em horas
-    os_com_reparo = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.tempo_reparo != None
-    ).all()
+    os_com_reparo = _os_query().filter(OrdemServico.tempo_reparo != None).all()
     mttr = sum(o.tempo_reparo for o in os_com_reparo) / len(os_com_reparo) / 60 if os_com_reparo else 0
-    
-    # MTBF (Mean Time Between Failures) - simplificado
-    # Conta dias desde primeira OS até hoje / número de falhas
-    first_os = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
+
+    # MTBF (Mean Time Between Failures) — simplificado
+    first_os = _os_query().filter(
         OrdemServico.tipo == TipoOS.CORRETIVA
     ).order_by(OrdemServico.created_at).first()
-    
-    total_corretivas = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.tipo == TipoOS.CORRETIVA
-    ).count()
-    
+
+    total_corretivas = _os_query().filter(OrdemServico.tipo == TipoOS.CORRETIVA).count()
+
     if first_os and total_corretivas > 1:
         days_operating = (now - first_os.created_at).days or 1
         mtbf = (days_operating * 24) / total_corretivas
     else:
         mtbf = 720  # Default 30 dias em horas
-    
+
     # Disponibilidade = (MTBF / (MTBF + MTTR)) * 100
     disponibilidade = (mtbf / (mtbf + mttr) * 100) if (mtbf + mttr) > 0 else 100
-    
+
     # Custos do mês
-    custos_mes = db.query(CustoOS).join(OrdemServico).filter(
-        CustoOS.organization_id == org_id,
-        OrdemServico.created_at >= first_day_month
-    ).all()
+    custos_mes_ids = [str(o.id) for o in _os_query().filter(OrdemServico.created_at >= first_day_month).all()]
+    if custos_mes_ids:
+        custos_mes = db.query(CustoOS).filter(
+            CustoOS.organization_id == org_id,
+            CustoOS.ordem_servico_id.in_(custos_mes_ids),
+        ).all()
+    else:
+        custos_mes = []
     custo_total_mes = sum(c.valor * c.quantidade for c in custos_mes)
-    
+
     # Custo de máquina parada do mês
-    os_mes_com_tempo = db.query(OrdemServico).join(Equipamento).filter(
-        OrdemServico.organization_id == org_id,
+    os_mes_com_tempo = _os_query().filter(
         OrdemServico.created_at >= first_day_month,
-        OrdemServico.tempo_total != None
+        OrdemServico.tempo_total != None,
     ).all()
     
     custo_parada = 0
@@ -2455,74 +2738,74 @@ async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session
             custo_parada += horas_parada * equip.valor_hora
     
     # Mix de tipos de OS (todas — sem filtro mensal para dar visão completa)
-    preventivas = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.tipo == TipoOS.PREVENTIVA
-    ).count()
-    corretivas = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.tipo == TipoOS.CORRETIVA
-    ).count()
-    preditivas = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.tipo == TipoOS.PREDITIVA
-    ).count()
-    
-    # Top equipamentos por falhas
+    preventivas = _os_query().filter(OrdemServico.tipo == TipoOS.PREVENTIVA).count()
+    corretivas  = _os_query().filter(OrdemServico.tipo == TipoOS.CORRETIVA).count()
+    preditivas  = _os_query().filter(OrdemServico.tipo == TipoOS.PREDITIVA).count()
+
     from sqlalchemy import func
-    top_falhas = db.query(
-        OrdemServico.equipamento_id,
-        func.count(OrdemServico.id).label('total')
-    ).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.tipo == TipoOS.CORRETIVA
-    ).group_by(OrdemServico.equipamento_id).order_by(func.count(OrdemServico.id).desc()).limit(5).all()
-    
+
+    # Top equipamentos por falhas
+    top_falhas_q = _os_query().filter(OrdemServico.tipo == TipoOS.CORRETIVA)
+    top_falhas = (
+        db.query(OrdemServico.equipamento_id, func.count(OrdemServico.id).label("total"))
+        .filter(OrdemServico.id.in_([o.id for o in top_falhas_q.all()]))
+        .group_by(OrdemServico.equipamento_id)
+        .order_by(func.count(OrdemServico.id).desc())
+        .limit(5)
+        .all()
+    )
     top_equipamentos_falhas = []
     for eq_id, total in top_falhas:
         equip = db.query(Equipamento).filter(Equipamento.id == eq_id).first()
         if equip:
             top_equipamentos_falhas.append({"nome": equip.nome, "codigo": equip.codigo, "total": total})
-    
+
     # Top equipamentos por custo
-    top_custos = db.query(
-        OrdemServico.equipamento_id,
-        func.sum(CustoOS.valor * CustoOS.quantidade).label('total')
-    ).join(CustoOS).filter(
-        OrdemServico.organization_id == org_id
-    ).group_by(OrdemServico.equipamento_id).order_by(func.sum(CustoOS.valor * CustoOS.quantidade).desc()).limit(5).all()
-    
+    top_custos_os_ids = [o.id for o in _os_query().all()]
+    if top_custos_os_ids:
+        top_custos = (
+            db.query(OrdemServico.equipamento_id, func.sum(CustoOS.valor * CustoOS.quantidade).label("total"))
+            .join(CustoOS)
+            .filter(OrdemServico.id.in_(top_custos_os_ids))
+            .group_by(OrdemServico.equipamento_id)
+            .order_by(func.sum(CustoOS.valor * CustoOS.quantidade).desc())
+            .limit(5)
+            .all()
+        )
+    else:
+        top_custos = []
     top_equipamentos_custos = []
     for eq_id, total in top_custos:
         equip = db.query(Equipamento).filter(Equipamento.id == eq_id).first()
         if equip:
             top_equipamentos_custos.append({"nome": equip.nome, "codigo": equip.codigo, "total": float(total or 0)})
-    
+
     # Average response time
-    os_com_resposta = db.query(OrdemServico).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.tempo_resposta != None
-    ).all()
+    os_com_resposta = _os_query().filter(OrdemServico.tempo_resposta != None).all()
     avg_tempo_resposta = sum(o.tempo_resposta for o in os_com_resposta) / len(os_com_resposta) if os_com_resposta else 0
-    
+
     # Top equipamentos por downtime (tempo parado)
-    top_downtime_raw = db.query(
-        OrdemServico.equipamento_id,
-        func.sum(OrdemServico.tempo_total).label('total_downtime')
-    ).filter(
-        OrdemServico.organization_id == org_id,
-        OrdemServico.tempo_total != None
-    ).group_by(OrdemServico.equipamento_id).order_by(func.sum(OrdemServico.tempo_total).desc()).limit(5).all()
-    
+    all_os_ids = [o.id for o in _os_query().filter(OrdemServico.tempo_total != None).all()]
+    if all_os_ids:
+        top_downtime_raw = (
+            db.query(OrdemServico.equipamento_id, func.sum(OrdemServico.tempo_total).label("total_downtime"))
+            .filter(OrdemServico.id.in_(all_os_ids))
+            .group_by(OrdemServico.equipamento_id)
+            .order_by(func.sum(OrdemServico.tempo_total).desc())
+            .limit(5)
+            .all()
+        )
+    else:
+        top_downtime_raw = []
     top_equipamentos_downtime = []
     for eq_id, total_dt in top_downtime_raw:
         equip = db.query(Equipamento).filter(Equipamento.id == eq_id).first()
         if equip:
             hours = round((total_dt or 0) / 60, 1)
             top_equipamentos_downtime.append({"nome": equip.nome, "codigo": equip.codigo, "total_horas": hours})
-    
-    # Financial fields: only ADMIN receives real values
-    _is_admin = user.role == UserRole.ADMIN
+
+    # Financial fields: ADMIN/SUPERUSUARIO/LIDER com setor recebem valores
+    _is_fin = user.role in (UserRole.ADMIN, UserRole.SUPERUSUARIO, UserRole.LIDER)
     return DashboardKPIs(
         total_os_mes=total_os_mes,
         os_abertas=os_abertas,
@@ -2530,12 +2813,12 @@ async def get_dashboard_kpis(user: User = Depends(get_current_user), db: Session
         mttr=round(mttr, 2),
         mtbf=round(mtbf, 2),
         disponibilidade=round(disponibilidade, 2),
-        custo_total_mes=round(custo_total_mes, 2) if _is_admin else 0.0,
-        custo_parada_mes=round(custo_parada, 2) if _is_admin else 0.0,
+        custo_total_mes=round(custo_total_mes, 2) if _is_fin else 0.0,
+        custo_parada_mes=round(custo_parada, 2) if _is_fin else 0.0,
         avg_tempo_resposta=round(avg_tempo_resposta, 1),
         preventiva_vs_corretiva={"preventiva": preventivas, "corretiva": corretivas, "preditiva": preditivas},
         top_equipamentos_falhas=top_equipamentos_falhas,
-        top_equipamentos_custos=top_equipamentos_custos if _is_admin else [],
+        top_equipamentos_custos=top_equipamentos_custos if _is_fin else [],
         top_equipamentos_downtime=top_equipamentos_downtime
     )
 
@@ -2559,18 +2842,24 @@ async def get_backlog(user: User = Depends(get_current_user), db: Session = Depe
         OrdemServico.status == StatusOS.AGUARDANDO_REVISAO
     ).count()
     
+    aguardando_peca = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == org_id,
+        OrdemServico.status == StatusOS.AGUARDANDO_PECA
+    ).count()
+
     atrasadas = db.query(OrdemServico).filter(
         OrdemServico.organization_id == org_id,
         OrdemServico.dentro_sla == False,
-        OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO])
+        OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA])
     ).count()
-    
+
     return {
         "abertas": abertas,
         "em_atendimento": em_atendimento,
+        "aguardando_peca": aguardando_peca,
         "aguardando_revisao": aguardando_revisao,
         "atrasadas": atrasadas,
-        "total_pendentes": abertas + em_atendimento + aguardando_revisao
+        "total_pendentes": abertas + em_atendimento + aguardando_peca + aguardando_revisao
     }
 
 @api_router.get("/equipamentos/{equipamento_id}/historico")
@@ -4135,46 +4424,259 @@ async def get_kanban(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Retorna OS agrupadas por status para o board Kanban."""
+    """Retorna OS agrupadas por status para o board Kanban — cards enriquecidos."""
+    import json as _json
+
     org = db.query(Organization).filter(Organization.id == user.organization_id).first()
     _require_feature(org, "kanban")
 
-    ordens = db.query(OrdemServico).filter(
+    query = db.query(OrdemServico).filter(
         OrdemServico.organization_id == user.organization_id,
         OrdemServico.status != StatusOS.FECHADA,
-    ).order_by(OrdemServico.created_at.desc()).all()
+    )
+    # Operador vê apenas o próprio setor
+    if user.role == UserRole.OPERADOR and user.setor:
+        from sqlalchemy import text as _sa_text_k
+        rows = db.execute(
+            _sa_text_k("SELECT id FROM equipamentos WHERE organization_id = :org AND setor = :setor AND ativo = TRUE"),
+            {"org": str(user.organization_id), "setor": user.setor},
+        ).fetchall()
+        equip_ids_setor = [r[0] for r in rows]
+        query = query.filter(OrdemServico.equipamento_id.in_(equip_ids_setor))
+    ordens = query.order_by(OrdemServico.created_at.desc()).all()
 
-    eq_map = {str(e.id): e.nome for e in db.query(Equipamento).filter(Equipamento.organization_id == user.organization_id).all()}
-    user_map = {str(u.id): u.nome for u in db.query(User).filter(User.organization_id == user.organization_id).all()}
+    # Build lookup maps
+    eq_map = {str(e.id): e for e in db.query(Equipamento).filter(
+        Equipamento.organization_id == user.organization_id).all()}
+    user_obj_map = {str(u.id): u for u in db.query(User).filter(
+        User.organization_id == user.organization_id).all()}
+    grupo_map = {str(g.id): g.nome for g in db.query(Grupo).filter(
+        Grupo.organization_id == user.organization_id).all()}
 
-    columns = {s.value: [] for s in [StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_REVISAO, StatusOS.REVISADA]}
+    column_ids = [
+        StatusOS.ABERTA.value,
+        StatusOS.EM_ATENDIMENTO.value,
+        StatusOS.AGUARDANDO_PECA.value,
+        StatusOS.AGUARDANDO_REVISAO.value,
+        StatusOS.REVISADA.value,
+    ]
+    columns = {s: [] for s in column_ids}
 
     for o in ordens:
         col = o.status.value
         if col not in columns:
             continue
+
+        equip = eq_map.get(str(o.equipamento_id))
+        tecnico_obj = user_obj_map.get(str(o.tecnico_id)) if o.tecnico_id else None
+        solicitante_obj = user_obj_map.get(str(o.solicitante_id)) if o.solicitante_id else None
+
+        # occurrences count
+        try:
+            occ_list = _json.loads(o.occurrences) if getattr(o, "occurrences", None) else []
+        except Exception:
+            occ_list = []
+
         columns[col].append({
             "id": str(o.id),
             "numero": o.numero,
-            "equipamento": eq_map.get(str(o.equipamento_id), "—"),
+            # Equipamento enriquecido
+            "equipamento": equip.nome if equip else "—",
+            "equipamento_codigo": equip.codigo if equip else None,
+            "equipamento_localizacao": equip.localizacao if equip else None,
+            # Grupo de falha
+            "grupo_id": str(o.grupo_id) if o.grupo_id else None,
+            "grupo_nome": grupo_map.get(str(o.grupo_id)) if o.grupo_id else None,
+            # Tipo e prioridade
             "tipo": o.tipo.value,
             "prioridade": o.prioridade.value,
-            "tecnico": user_map.get(str(o.tecnico_id), None) if o.tecnico_id else None,
-            "descricao": (o.descricao or "")[:80],
+            # Pessoas
+            "solicitante": solicitante_obj.nome if solicitante_obj else None,
+            "tecnico": tecnico_obj.nome if tecnico_obj else None,
+            "tecnico_employee_id": tecnico_obj.employee_id if tecnico_obj else None,
+            # Descricao
+            "descricao": (o.descricao or "")[:100],
+            # Timestamps
             "created_at": o.created_at.isoformat() if o.created_at else None,
             "inicio_atendimento": o.inicio_atendimento.isoformat() if o.inicio_atendimento else None,
+            "downtime_start": getattr(o, "downtime_start", o.created_at).isoformat() if getattr(o, "downtime_start", None) or o.created_at else None,
+            # SLA
             "dentro_sla": o.dentro_sla,
-            "reincidente": o.reincidente,
             "tempo_resposta": o.tempo_resposta,
+            # Extras
+            "reincidente": o.reincidente,
+            "occurrences_count": len(occ_list),
         })
 
     return {
         "columns": [
-            {"id": "aberta",              "label": "Aberta",           "cards": columns["aberta"]},
-            {"id": "em_atendimento",      "label": "Em Atendimento",   "cards": columns["em_atendimento"]},
-            {"id": "aguardando_revisao",  "label": "Ag. Revisão",      "cards": columns["aguardando_revisao"]},
-            {"id": "revisada",            "label": "Revisada",         "cards": columns["revisada"]},
+            {"id": "aberta",             "label": "Aberto",           "cards": columns["aberta"]},
+            {"id": "em_atendimento",     "label": "Em Atendimento",   "cards": columns["em_atendimento"]},
+            {"id": "aguardando_peca",    "label": "Aguardando Peça",  "cards": columns["aguardando_peca"]},
+            {"id": "aguardando_revisao", "label": "Ag. Revisão",      "cards": columns["aguardando_revisao"]},
+            {"id": "revisada",           "label": "Revisada",         "cards": columns["revisada"]},
         ]
+    }
+
+
+# ========== SUPERUSUÁRIO — PORTAL DE GESTÃO DE EMPRESAS ==========
+
+def _require_superuser(user: User):
+    if user.role != UserRole.SUPERUSUARIO:
+        raise HTTPException(status_code=403, detail="Acesso exclusivo do Superusuário.")
+
+
+@api_router.get("/superuser/empresas")
+async def superuser_list_empresas(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Lista todas as organizações cadastradas na plataforma."""
+    _require_superuser(user)
+    orgs = db.query(Organization).order_by(Organization.created_at.desc()).all()
+    result = []
+    for org in orgs:
+        usage = get_org_usage(db, org.id)
+        limits = PLAN_LIMITS.get(org.plano, PLAN_LIMITS[PlanoSaaS.DEMO])
+        result.append({
+            "id": str(org.id),
+            "nome": org.nome,
+            "cnpj": org.cnpj,
+            "plano": org.plano.value,
+            "plano_label": limits.get("label", org.plano.value),
+            "subscription_status": org.subscription_status,
+            "ativo": org.ativo,
+            "plano_trial_expira_em": org.plano_trial_expira_em.isoformat() if org.plano_trial_expira_em else None,
+            "created_at": org.created_at.isoformat() if org.created_at else None,
+            "usage": usage,
+            "limits": {
+                "max_equipamentos": limits["max_equipamentos"],
+                "max_users": limits["max_users"],
+                "max_os_mes": limits["max_os_mes"],
+            },
+        })
+    return {"empresas": result, "total": len(result)}
+
+
+class SuperuserOrgCreate(BaseModel):
+    nome: str
+    cnpj: Optional[str] = None
+    plano: PlanoSaaS = PlanoSaaS.DEMO
+    admin_email: EmailStr
+    admin_password: str
+    admin_nome: str
+
+
+@api_router.post("/superuser/empresas", status_code=201)
+async def superuser_create_empresa(
+    data: SuperuserOrgCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Cria nova empresa (organização) e seu admin inicial."""
+    _require_superuser(user)
+
+    existing = db.query(User).filter(User.email == data.admin_email.lower()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email do admin já cadastrado.")
+
+    org = Organization(
+        nome=data.nome,
+        cnpj=data.cnpj,
+        plano=data.plano,
+        plano_trial_expira_em=datetime.now(timezone.utc) + timedelta(days=10),
+    )
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+    seed_grupos_padrao(db, org.id)
+
+    admin_user = User(
+        email=data.admin_email.lower(),
+        password_hash=hash_password(data.admin_password),
+        nome=data.admin_nome,
+        role=UserRole.ADMIN,
+        organization_id=org.id,
+    )
+    db.add(admin_user)
+    db.commit()
+
+    create_audit_log(
+        db, str(org.id), str(user.id), "organization", str(org.id), "superuser_create"
+    )
+    return {"message": "Empresa criada com sucesso.", "org_id": str(org.id)}
+
+
+class SuperuserOrgUpdate(BaseModel):
+    nome: Optional[str] = None
+    plano: Optional[PlanoSaaS] = None
+    ativo: Optional[bool] = None
+    subscription_status: Optional[str] = None
+
+
+@api_router.put("/superuser/empresas/{org_id}")
+async def superuser_update_empresa(
+    org_id: str,
+    data: SuperuserOrgUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Edita ou suspende uma empresa."""
+    _require_superuser(user)
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Empresa não encontrada.")
+    if data.nome is not None:
+        org.nome = data.nome
+    if data.plano is not None:
+        org.plano = data.plano
+        limits = PLAN_LIMITS[data.plano]
+        org.limite_equipamentos = limits["max_equipamentos"]
+        org.limite_usuarios = limits["max_users"]
+        org.limite_os_mes = limits["max_os_mes"]
+    if data.ativo is not None:
+        org.ativo = data.ativo
+    if data.subscription_status is not None:
+        org.subscription_status = data.subscription_status
+    db.commit()
+    create_audit_log(db, str(org.id), str(user.id), "organization", str(org.id), "superuser_update")
+    return {"message": "Empresa atualizada.", "org_id": str(org.id)}
+
+
+@api_router.get("/superuser/dashboard")
+async def superuser_dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Dashboard agregado: total OS abertas, disponibilidade média e alertas críticos."""
+    _require_superuser(user)
+    orgs = db.query(Organization).filter(Organization.ativo == True).all()
+    total_orgs = len(orgs)
+    total_os_abertas = db.query(OrdemServico).filter(
+        OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA])
+    ).count()
+    total_os_mes = db.query(OrdemServico).filter(
+        OrdemServico.created_at >= datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    ).count()
+    alertas_criticos = db.query(AlertaPreditivo).filter(
+        AlertaPreditivo.status == "ABERTO",
+        AlertaPreditivo.severidade == "CRITICO",
+    ).count()
+
+    # Disponibilidade média (global — todas as orgs)
+    os_reparo = db.query(OrdemServico).filter(OrdemServico.tempo_reparo != None).all()
+    mttr_global = sum(o.tempo_reparo for o in os_reparo) / len(os_reparo) / 60 if os_reparo else 0
+    first_os_global = db.query(OrdemServico).filter(
+        OrdemServico.tipo == TipoOS.CORRETIVA
+    ).order_by(OrdemServico.created_at).first()
+    total_cor = db.query(OrdemServico).filter(OrdemServico.tipo == TipoOS.CORRETIVA).count()
+    if first_os_global and total_cor > 1:
+        days_op = (datetime.now(timezone.utc) - first_os_global.created_at).days or 1
+        mtbf_global = (days_op * 24) / total_cor
+    else:
+        mtbf_global = 720
+    disponibilidade_media = (mtbf_global / (mtbf_global + mttr_global) * 100) if (mtbf_global + mttr_global) > 0 else 100
+
+    return {
+        "total_empresas": total_orgs,
+        "total_os_abertas": total_os_abertas,
+        "total_os_mes": total_os_mes,
+        "alertas_criticos": alertas_criticos,
+        "disponibilidade_media": round(disponibilidade_media, 2),
     }
 
 

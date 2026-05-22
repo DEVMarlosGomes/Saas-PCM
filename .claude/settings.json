@@ -24,7 +24,11 @@
       "Bash(git push *)",
       "Bash(grep -n \"custo\\\\|valor\\\\|financial\\\\|FinancialGuard\\\\|R\\\\$\\\\|DollarSign\" frontend/src/pages/OrdensServicoPage.jsx)",
       "Bash(grep -n \"custo\\\\|valor\\\\|financial\\\\|R\\\\$\\\\|DollarSign\" frontend/src/pages/EquipamentosPage.jsx)",
-      "Bash(grep -n \"custo\\\\|valor\\\\|R\\\\$\" frontend/src/pages/RelatoriosPage.jsx)"
+      "Bash(grep -n \"custo\\\\|valor\\\\|R\\\\$\" frontend/src/pages/RelatoriosPage.jsx)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\MARLOS\\\\Documents\\\\RENATO\\\\Saas-PCM\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Sort-Object)",
+      "Bash(npm run *)"
     ],
     "additionalDirectories": [
       "c:\\Users\\MARLOS\\.claude\\projects\\c--Users-MARLOS-Documents-RENATO-Saas-PCM\\memory"

@@ -50,6 +50,7 @@ export default function UsuariosPage() {
   const [newRole, setNewRole] = useState("operador");
   const [newSetor, setNewSetor] = useState("");
   const [newIsLider, setNewIsLider] = useState(false);
+  const [newEmployeeId, setNewEmployeeId] = useState("");
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   // Inline edit state
@@ -82,6 +83,7 @@ export default function UsuariosPage() {
       await createUser({
         email: newEmail, nome: newNome, password: newPassword, role: newRole,
         setor: newSetor || null, is_lider: newIsLider,
+        employee_id: newRole === "tecnico" && newEmployeeId ? newEmployeeId : null,
       });
       toast.success("Usuário criado com sucesso!");
       setShowCreateModal(false);
@@ -300,15 +302,22 @@ export default function UsuariosPage() {
                 </div>
               )}
 
-              {/* Setor badge */}
-              {u.setor && (
-                <div className="mt-2 flex items-center gap-1.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded bg-muted text-muted-foreground">
-                    {u.setor}
-                  </span>
+              {/* Setor + matrícula badges */}
+              {(u.setor || u.employee_id) && (
+                <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                  {u.setor && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                      {u.setor}
+                    </span>
+                  )}
                   {u.is_lider && (
                     <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
                       Líder
+                    </span>
+                  )}
+                  {u.employee_id && (
+                    <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-emerald-500/8 text-emerald-400 border border-emerald-500/15">
+                      Mat. {u.employee_id}
                     </span>
                   )}
                 </div>
@@ -383,6 +392,17 @@ export default function UsuariosPage() {
                   placeholder="ex: MECANICA, ELETRICA, CIVIL"
                 />
               </div>
+              {newRole === "tecnico" && (
+                <div className="space-y-2">
+                  <Label>Matrícula <span className="text-muted-foreground font-normal">(opcional, login compartilhado)</span></Label>
+                  <Input
+                    value={newEmployeeId}
+                    onChange={(e) => setNewEmployeeId(e.target.value)}
+                    className="h-10 rounded-lg font-mono"
+                    placeholder="ex: 12345"
+                  />
+                </div>
+              )}
               <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
                 <input
                   type="checkbox"

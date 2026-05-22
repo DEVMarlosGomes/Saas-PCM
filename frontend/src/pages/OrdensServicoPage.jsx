@@ -19,7 +19,9 @@ import {
 
 const statusConfig = {
   aberta: { label: "Aberta", color: "status-aberta", icon: AlertTriangle, next: "em_atendimento", nextLabel: "Iniciar" },
-  em_atendimento: { label: "Em Atendimento", color: "status-em-atendimento", icon: Wrench, next: "aguardando_revisao", nextLabel: "Concluir" },
+  em_atendimento: { label: "Em Atendimento", color: "status-em-atendimento", icon: Wrench, next: "aguardando_revisao", nextLabel: "Concluir",
+    alts: [{ next: "aguardando_peca", nextLabel: "Aguardar Peça" }] },
+  aguardando_peca: { label: "Ag. Peça", color: "status-aguardando-peca", icon: Clock, next: "em_atendimento", nextLabel: "Retomar" },
   aguardando_revisao: { label: "Ag. Revisão", color: "status-aguardando-revisao", icon: Clock, next: "revisada", nextLabel: "Aprovar" },
   revisada: { label: "Revisada", color: "status-revisada", icon: CheckCircle, next: "fechada", nextLabel: "Fechar" },
   fechada: { label: "Fechada", color: "status-fechada", icon: FileCheck },
@@ -198,6 +200,7 @@ export default function OrdensServicoPage() {
     if (!cfg?.next) return null;
     if (os.status === "aberta" && !canEditOS) return null;
     if (os.status === "em_atendimento" && !canEditOS) return null;
+    if (os.status === "aguardando_peca" && !canEditOS) return null;
     if (os.status === "aguardando_revisao" && !canReviewOS) return null;
     if (os.status === "revisada" && !canReviewOS) return null;
     return cfg;
@@ -303,6 +306,7 @@ export default function OrdensServicoPage() {
               <div
                 key={os.id}
                 className={`border border-border/50 rounded-xl bg-card p-4 card-hover group cursor-pointer transition-all ${
+                  os.status === 'aguardando_peca'    ? 'border-l-4 border-l-orange-500' :
                   os.status === 'aguardando_revisao' ? 'border-l-4 border-l-amber-500' :
                   os.prioridade === 'critica' && os.status !== 'fechada' ? 'border-l-4 border-l-red-500' : ''
                 }`}
@@ -358,20 +362,33 @@ export default function OrdensServicoPage() {
                   </div>
 
                   {/* Status + Quick Action */}
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                     <Badge className={`${sc.color} rounded-lg px-2.5 py-1 text-xs border`}>
                       <StatusIcon className="h-3 w-3 mr-1" />
                       {sc.label}
                     </Badge>
                     {nextAction && (
-                      <Button
-                        size="sm"
-                        className="h-8 rounded-lg text-xs px-3 shadow-sm"
-                        onClick={(e) => { e.stopPropagation(); handleStatusChange(os, nextAction.next); }}
-                      >
-                        <ArrowRight className="h-3 w-3 mr-1" />
-                        {nextAction.nextLabel}
-                      </Button>
+                      <>
+                        {nextAction.alts?.map(alt => (
+                          <Button
+                            key={alt.next}
+                            size="sm"
+                            variant="outline"
+                            className="h-8 rounded-lg text-xs px-3"
+                            onClick={(e) => { e.stopPropagation(); handleStatusChange(os, alt.next); }}
+                          >
+                            {alt.nextLabel}
+                          </Button>
+                        ))}
+                        <Button
+                          size="sm"
+                          className="h-8 rounded-lg text-xs px-3 shadow-sm"
+                          onClick={(e) => { e.stopPropagation(); handleStatusChange(os, nextAction.next); }}
+                        >
+                          <ArrowRight className="h-3 w-3 mr-1" />
+                          {nextAction.nextLabel}
+                        </Button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -416,13 +433,25 @@ export default function OrdensServicoPage() {
                 const next = getNextAction(detailOS);
                 if (!next) return null;
                 return (
-                  <Button
-                    className="w-full h-12 rounded-xl text-base font-semibold shadow-lg shadow-primary/20"
-                    onClick={() => handleStatusChange(detailOS, next.next)}
-                  >
-                    <ArrowRight className="h-5 w-5 mr-2" />
-                    {next.nextLabel} OS
-                  </Button>
+                  <div className="flex flex-col gap-2">
+                    {next.alts?.map(alt => (
+                      <Button
+                        key={alt.next}
+                        variant="outline"
+                        className="w-full h-11 rounded-xl text-sm font-semibold"
+                        onClick={() => handleStatusChange(detailOS, alt.next)}
+                      >
+                        {alt.nextLabel}
+                      </Button>
+                    ))}
+                    <Button
+                      className="w-full h-12 rounded-xl text-base font-semibold shadow-lg shadow-primary/20"
+                      onClick={() => handleStatusChange(detailOS, next.next)}
+                    >
+                      <ArrowRight className="h-5 w-5 mr-2" />
+                      {next.nextLabel} OS
+                    </Button>
+                  </div>
                 );
               })()}
 

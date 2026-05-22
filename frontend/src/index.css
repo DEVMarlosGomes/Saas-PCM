@@ -191,6 +191,7 @@
 /* ========== Status Colors ========== */
 .status-aberta { @apply bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20; }
 .status-em-atendimento { @apply bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20; }
+.status-aguardando-peca { @apply bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/20; }
 .status-aguardando-revisao { @apply bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20; }
 .status-revisada { @apply bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20; }
 .status-fechada { @apply bg-gray-500/10 text-gray-600 dark:text-gray-400 border border-gray-500/20; }

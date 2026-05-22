@@ -32,25 +32,31 @@ import { getAlertasPreditivos } from "../lib/api";
 
 const navSections = [
   {
+    label: "Plataforma",
+    items: [
+      { to: "/superuser", icon: Shield, label: "Portal Plataforma", roles: ["superusuario"] },
+    ],
+  },
+  {
     label: "Principal",
     items: [
-      { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
+      { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", roles: ["admin", "lider", "tecnico", "operador"] },
     ],
   },
   {
     label: "Operacional",
     items: [
-      { to: "/equipamentos", icon: Settings, label: "Equipamentos" },
-      { to: "/ordens-servico", icon: Wrench, label: "Ordens de Serviço" },
-      { to: "/kanban", icon: Kanban, label: "Kanban" },
-      { to: "/planos-preventivos", icon: Calendar, label: "Manutenção Preventiva" },
+      { to: "/equipamentos", icon: Settings, label: "Equipamentos", roles: ["admin", "lider", "tecnico"] },
+      { to: "/ordens-servico", icon: Wrench, label: "Ordens de Serviço", roles: ["admin", "lider", "tecnico", "operador"] },
+      { to: "/kanban", icon: Kanban, label: "Kanban", roles: ["admin", "lider", "tecnico", "operador"] },
+      { to: "/planos-preventivos", icon: Calendar, label: "Manutenção Preventiva", roles: ["admin", "lider", "tecnico"] },
     ],
   },
   {
     label: "Inteligência",
     items: [
-      { to: "/preditivo", icon: Activity, label: "Análise Preditiva" },
-      { to: "/relatorios", icon: BarChart2, label: "Relatórios" },
+      { to: "/preditivo", icon: Activity, label: "Análise Preditiva", roles: ["admin", "lider"] },
+      { to: "/relatorios", icon: BarChart2, label: "Relatórios", roles: ["admin", "lider"] },
     ],
   },
   {
@@ -70,6 +76,7 @@ const navSections = [
 ];
 
 const roleLabels = {
+  superusuario: "Superusuário",
   admin: "Administrador",
   lider: "Líder Técnico",
   tecnico: "Técnico",
@@ -77,6 +84,7 @@ const roleLabels = {
 };
 
 const roleBadgeColors = {
+  superusuario: "bg-red-500/10 text-red-400 border-red-500/20",
   admin: "bg-blue-500/10 text-blue-500 border-blue-500/20",
   lider: "bg-purple-500/10 text-purple-500 border-purple-500/20",
   tecnico: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
@@ -84,7 +92,7 @@ const roleBadgeColors = {
 };
 
 export default function AppLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, endTechnicianSession } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
@@ -137,6 +145,7 @@ export default function AppLayout() {
       auditoria: "Auditoria",
       billing: "Planos & Billing",
       settings: "Configurações",
+      superuser: "Portal Plataforma",
     };
     return map[path] || "Aurix";
   };
@@ -212,26 +221,48 @@ export default function AppLayout() {
       {/* User section at bottom */}
       <div className="border-t border-border/50 p-3 shrink-0">
         {!collapsed ? (
-          <div className="flex items-center gap-3 px-2 py-2">
-            <div className="flex items-center justify-center w-9 h-9 rounded-full bg-primary/10 text-primary text-sm font-bold shrink-0">
-              {getInitials(user?.nome)}
+          <div className="space-y-2">
+            <div className="flex items-center gap-3 px-2 py-2">
+              <div className="flex items-center justify-center w-9 h-9 rounded-full bg-primary/10 text-primary text-sm font-bold shrink-0">
+                {getInitials(user?.nome)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{user?.nome}</p>
+                <span className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md border font-medium ${roleBadgeColors[user?.role] || ''}`}>
+                  {roleLabels[user?.role] || user?.role}
+                </span>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                onClick={handleLogout}
+                title="Sair"
+                data-testid="logout-btn"
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{user?.nome}</p>
-              <span className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-md border font-medium ${roleBadgeColors[user?.role] || ''}`}>
-                {roleLabels[user?.role]}
-              </span>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-              onClick={handleLogout}
-              title="Sair"
-              data-testid="logout-btn"
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
+            {/* Technician sector badge + end-shift button */}
+            {user?.role === "tecnico" && user?.generic_session_sector && (
+              <div className="flex items-center justify-between px-2 pb-1">
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-muted-foreground">Setor ativo</span>
+                  <span className="text-xs font-semibold text-emerald-400 truncate max-w-[120px]">
+                    {user.generic_session_sector}
+                  </span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-[10px] px-2 text-amber-500 hover:text-amber-400 hover:bg-amber-500/10"
+                  onClick={endTechnicianSession}
+                  title="Finalizar turno e liberar acesso para outro técnico"
+                >
+                  Finalizar turno
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2">
