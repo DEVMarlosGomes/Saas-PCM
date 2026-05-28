@@ -171,13 +171,10 @@ export default function DashboardOperadorPage() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: "#F8FAFC", margin: 0, fontFamily: "Outfit, sans-serif" }}>
-            Dashboard do Operador
-          </h1>
-          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", margin: "2px 0 0" }}>
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", margin: 0 }}>
             Setor: <strong style={{ color: "#3B82F6" }}>{data.setor_nome || user?.setor || "—"}</strong>
             {lastUpdate && (
-              <span style={{ marginLeft: 12, color: "rgba(255,255,255,0.25)" }}>
+              <span style={{ marginLeft: 12, color: "rgba(255,255,255,0.35)" }}>
                 · Atualizado às {lastUpdate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
               </span>
             )}
