@@ -1,0 +1,46 @@
+{
+  "summary": "Re-teste pós-fix do enum statusos AGUARDANDO_PECA. 27/27 testes PASSARAM (100%). As 3 fases anteriormente bloqueadas (3.1, 3.2, 3.3) estão validadas em runtime, e os endpoints de regressão (/dashboard/kpis, /ordens-servico, /pending-reviews, /billing/*, /auditoria, /equipamentos) retornam 200. O fix do ALTER TYPE em conexão AUTOCOMMIT funcionou — não há mais 500 por enum inválido. Encontrada 1 discrepância MENOR de contrato: o request menciona PATCH /api/ordens-servico/{id} para mudança de status, mas o servidor expõe PUT (server.py:2479). Comportamento funcional está correto (response_time_min e inicio_atendimento são preenchidos na transição para em_atendimento).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "PUT /api/ordens-servico/{id}",
+        "issue": "Request da fase 3.3 especifica método PATCH, mas o backend só expõe PUT (server.py:2479 — @api_router.put). PATCH retorna 405. Se o frontend chamar PATCH para mudar status, falhará. Recomenda-se adicionar @api_router.patch como alias OU alinhar o contrato a PUT explicitamente."
+      }
+    ]
+  },
+  "phases_validation": {
+    "fase_3_1_failure_group_block": "OK — POST OS eletrico cria com sucesso; 2ª OS eletrico no mesmo equipamento → 409 com body {error:'bloqueio_grupo_falha', message, os_bloqueante:{id, failure_group, status}, grupos_disponiveis:[...]}; OS de outro grupo (mecanico) → 201; downtime_start da OS bloqueante preservado.",
+    "fase_3_2_patch_ocorrencia": "OK — PATCH /api/ordens-servico/{id}/ocorrencia funciona como operador; 3 patches em sequência → occurrences_count incrementa 1→2→3 (APPEND, não replace); status e downtime_start NÃO mudam. ADMIN também pode patchar (regra operador-ou-superior validada).",
+    "fase_3_3_response_time_min": "OK — Após PUT status=em_atendimento (autenticado como tecnico), GET /api/ordens-servico/{id} retorna response_time_min preenchido (inteiro em minutos, >=0) e tempo_resposta. inicio_atendimento também preenchido. NOTA: endpoint real é PUT (não PATCH como descrito no review request).",
+    "regressao_dashboard_kpis": "OK — GET /api/dashboard/kpis (admin) → 200.",
+    "regressao_ordens_servico": "OK — GET /api/ordens-servico (admin) → 200.",
+    "regressao_outros": "OK — /billing/plan, /billing/transactions, /auditoria, /ordens-servico/pending-reviews, /equipamentos, POST /equipamentos → 200/201."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pcm_phases.py",
+    "/app/test_reports/pytest/pcm_phases.xml"
+  ],
+  "action_items": [
+    "[MENOR] Alinhar contrato HTTP de mudança de status em OS: o spec/review pede PATCH /api/ordens-servico/{id} mas implementação usa PUT. Adicionar alias @api_router.patch OU atualizar a documentação/spec para PUT.",
+    "[NÃO BLOQUEANTE — herdado da iteração 3] server.py monolítico (>5700 linhas) e try/except silencioso nas migrations continua presente. Não bloqueia operação mas dificulta manutenção."
+  ],
+  "critical_code_review_comments": [
+    "PUT vs PATCH inconsistência: status update usa PUT /ordens-servico/{id} mas append-only de ocorrência usa PATCH /ordens-servico/{id}/ocorrencia. Frontend/clientes precisam saber a diferença — documentar OpenAPI ou padronizar.",
+    "Migration in-code para ALTER TYPE agora funciona (autocommit aplicado externamente). Considerar refatorar o bloco para sempre usar conexão isolada com isolation_level='AUTOCOMMIT' e logar cada ALTER TYPE com WARNING em vez de engolir exceções."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pcm_phases.py (alterado: fase 3.3 usa PUT em vez de PATCH; _close_open_os_for_equip também usa PUT — antes a função era no-op silencioso)",
+    "/app/test_reports/iteration_4.json (criado)",
+    "/app/test_reports/pytest/pcm_phases.xml (regerado — 27 PASS)"
+  ],
+  "success_rate": {
+    "backend": "100% (27/27)",
+    "frontend": "N/A (não solicitado)"
+  },
+  "test_credentials": "OK — admin/lider/tecnico/operador todos logam.",
+  "seed_data_creation": "Testes criam OS com prefixo descrição 'TEST ...', usuários TEST_emp_* e equipamentos TEST_*. Cleanup parcial via _close_open_os_for_equip (fecha OS abertas do equipamento usado).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Fix do enum statusos AGUARDANDO_PECA confirmado em runtime. Todas as 3 fases bloqueadas (3.1/3.2/3.3) + regressões passam. Próximo passo: testar frontend (fases 5-8) ou fazer testes E2E. Atenção ao contrato PUT vs PATCH se for testar UI de mudança de status."
+}

@@ -148,9 +148,9 @@ def _close_open_os_for_equip(equip_id):
         return
     for o in r.json():
         if o.get("equipamento_id") == equip_id and o.get("status") not in ("fechada", "revisada"):
-            requests.patch(f"{API}/ordens-servico/{o['id']}",
-                           headers=_h("admin"),
-                           json={"status": "fechada", "solucao": "TEST cleanup"}, timeout=30)
+            requests.put(f"{API}/ordens-servico/{o['id']}",
+                         headers=_h("admin"),
+                         json={"status": "fechada", "solucao": "TEST cleanup"}, timeout=30)
 
 
 def test_fase3_1_failure_group_block_and_alternate():
@@ -231,9 +231,10 @@ def test_fase3_3_response_time_on_em_atendimento():
     os_id = r.json()["id"]
 
     time.sleep(1.5)
-    rp = requests.patch(f"{API}/ordens-servico/{os_id}", headers=_h("tecnico"),
-                       json={"status": "em_atendimento"}, timeout=30)
-    assert rp.status_code == 200, f"patch status -> {rp.status_code} {rp.text}"
+    # Route is PUT (not PATCH) — request used PATCH, but server exposes PUT for status updates.
+    rp = requests.put(f"{API}/ordens-servico/{os_id}", headers=_h("tecnico"),
+                      json={"status": "em_atendimento"}, timeout=30)
+    assert rp.status_code == 200, f"put status -> {rp.status_code} {rp.text}"
 
     g = requests.get(f"{API}/ordens-servico/{os_id}", headers=_h("admin"), timeout=30).json()
     rt = g.get("response_time_min") if g.get("response_time_min") is not None else g.get("tempo_resposta")
