@@ -1,0 +1,56 @@
+{
+  "summary": "E2E frontend validation of PCM AURIX phases 5-8. FASE 5 (TecnicoLoginPage) WORKS: stepper 3-step, sectors load via /sectors/tecnico-options, wrong-password shows visible toast 'Senha genérica inválida', correct credentials redirect to /dashboard/operador. Role routing OK (operador→/dashboard/operador, lider→/dashboard/lider, admin→/dashboard). HOWEVER, BOTH DashboardOperadorPage AND DashboardLiderPage render an infinite loading spinner — none of the 5/6 KPIs, Pareto chart, Top5 Custo, Técnicos Ativos, Pendentes Revisão, OS Abertas list appear in DOM. The /kanban route as admin triggered a 500 (Failed to load resource: 500). As operador the Kanban page loads but shows '0 ordens ativas · Visualização (somente leitura)' which contradicts the spec (operador must add ocorrências). FASE 7 'Adicionar ocorrência' buttons NOT rendered. FASE 8 (Nova OS form / failure_group chips / BloqueioModal) NOT testable because Ordens-Serviço UI was blocked by upstream kanban errors. data-testid coverage = 0 across all required prefixes (tecnico-login-*, dashboard-operador-*, kanban-card-*, bloqueio-modal-*, os-failure-group-*).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/kanban (or whatever route Kanban calls)", "issue": "Returns HTTP 500 when accessed by admin@demo.pcm — page never finishes loading networkidle within 30s and console shows 'Failed to load resource: 500'.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/dashboard/operador & /api/dashboard/lider", "issue": "Possibly returning slow/error response that prevents the spinner from clearing. Loading state never resolves to rendered content for either operador@demo.pcm or lider@demo.pcm. Could be 400 (setor not configured) or 500. Needs investigation in backend logs."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "DashboardOperadorPage", "issue": "Infinite loading spinner — data never sets, no KPI/lists/equipamentos rendered. setLoading(false) only fires inside finally{}, suggesting the API call either hangs or err handler navigates away. Toast errors not visible in DOM scrape.", "selector": "div Loader2 spinner", "priority": "CRITICAL"},
+      {"component": "DashboardLiderPage", "issue": "Same infinite loading spinner. None of the 6 KPIs (Disponibilidade/MTTR/MTBF/OS Mês/T.Resposta/Custo Parada) nor Recharts <BarChart> Pareto SVG nor Top5/Técnicos/Pendentes-revisão rendered.", "selector": "div Loader2 spinner", "priority": "CRITICAL"},
+      {"component": "KanbanPage (operador view)", "issue": "Header text reads '0 ordens ativas · Visualização (somente leitura)' — but per spec operador must see 'Adicionar ocorrência' button on OS cards. Either (a) the role gating logic marks operador as read-only, or (b) there are zero OS so the buttons are not visible — but the literal copy 'somente leitura' is wrong for operador.", "selector": ".header text 'Visualização (somente leitura)'", "priority": "HIGH"},
+      {"component": "All pages (tecnico-login, dashboard-operador, kanban-card, bloqueio-modal, ordens-servico failure-group chips)", "issue": "ZERO data-testid attributes found with any of the required kebab-case prefixes. Severely impacts automation testability and is an explicit requirement.", "selector": "[data-testid^='*']", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Dashboard data fetch (operador & lider)", "issue": "Frontend stuck on loading state — backend response not arriving or being parsed incorrectly. Spec phase 6 unverifiable until this resolves.", "affected_selectors": [".dashboard-operador KPI grid", ".dashboard-lider KPI grid", "svg.recharts-surface"]},
+      {"flow": "Kanban load as admin", "issue": "500 backend response blocks rendering of cards; cannot validate failure_group badge colors, 30s live timers, SLA color, ocorrência counter, solicitante/técnico info.", "affected_selectors": [".kanban-card-*"]},
+      {"flow": "Nova OS / BloqueioModal (FASE 8)", "issue": "Not testable — Ordens-Serviço page reachable but creating duplicate OS for same failure_group requires existing OS in DB; no seed OS rendered (Kanban shows '0 ordens ativas'). Cannot exercise 409 → BloqueioModal flow.", "affected_selectors": ["dialog with chips Elétrico/Hidráulico/Mecânico"]}
+    ],
+    "design_issues": [
+      {"screen": "TecnicoLoginPage", "issues": ["Visual matches spec: Outfit headings, Inter body, rounded-sm (4px), dark industrial bg with subtle dot-grid, no glassmorphism. ✅"]},
+      {"screen": "AppLayout (light theme)", "issues": ["Dashboard loading state shows pale rainbow gradient-mesh background; main content area is mostly empty while spinner spins centered. Acceptable but reveals there is no skeleton state."]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_5.json"],
+  "action_items": [
+    "[CRITICAL] Debug why GET /api/dashboard/operador and /api/dashboard/lider don't return (or their data is dropped). Check backend logs after a request from operador@demo.pcm and lider@demo.pcm. Suspect: setor lookup mismatch, async race, or response shape mismatch with the React state setter.",
+    "[CRITICAL] Fix Kanban 500 when admin@demo.pcm hits /kanban (or the API it calls). Capture stack-trace in backend logs.",
+    "[HIGH] Operador view of Kanban: change copy 'Visualização (somente leitura)' to enable 'Adicionar ocorrência' button per spec; current role-gating excludes operador incorrectly.",
+    "[HIGH] Add data-testid kebab-case to all interactive/key elements: tecnico-login-setor-{id}, tecnico-login-matricula-input, tecnico-login-senha-input, tecnico-login-submit, dashboard-operador-kpi-{name}, kanban-card-{os_id}, kanban-card-failure-group-{group}, kanban-card-add-ocorrencia-btn, bloqueio-modal, bloqueio-modal-chip-{group}, os-form-failure-group-chip-{group}.",
+    "[MEDIUM] Show error toast/banner when dashboard data fetch fails (instead of silent spinner forever).",
+    "[MEDIUM] Seed at least 3–5 OS in different statuses (aberta/em_atendimento/aguardando_peca/aguardando_revisao) so Kanban and OS-list flows are demoable."
+  ],
+  "critical_code_review_comments": [
+    "DashboardOperadorPage.jsx & DashboardLiderPage.jsx: catch-block routes to /dashboard on 403; for 400 it shows a toast but leaves loading=false correctly. If the API never returns (or errors at a code that isn't 403/400/network), the toast 'Erro ao carregar dashboard' fires but `data` stays null and the screen sits at 'if (!data) return null' — user sees nothing or a stale spinner. Add an explicit empty/error state.",
+    "TecnicoLoginPage.jsx: tenant_id fallback chain (URL→localStorage→manual) is solid; but URL `t=` param leaks tenant ID. Consider POST body or signed token in production.",
+    "App.js TechnicianSessionGate is still legacy (using getEquipamentos to derive setores). With the new TecnicoLoginPage in place this is redundant — likely dead code.",
+    "data-testid coverage is 0 across the entire frontend — violates the code-review guideline that all interactive/informational elements must have data-testid.",
+    "Files >700 lines: DashboardLiderPage (375), KanbanPage and OrdensServicoPage likely larger — review for split.",
+    "Server-side enums for failure_group should be validated; frontend hardcodes chip order — keep in sync via shared constant or API enum endpoint."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (not retested this iteration)",
+    "frontend": "~25% (FASE 5 + admin routing pass; FASE 6/7/8 blocked by dashboard loading-stuck + kanban 500 + missing seed data)"
+  },
+  "test_credentials": "Used as documented in /app/memory/test_credentials.md. All login flows themselves succeeded — auth is not the blocker.",
+  "seed_data_creation": "No seed created. Strongly recommend backend seed of at least 3 OS spread across statuses so FASE 7/8 visual flows can be validated.",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "FASE 5 fully validated visually + functionally. Re-test FASE 6/7/8 once (a) dashboard endpoints respond consistently for operador/lider, (b) /kanban no longer 500s for admin, (c) at least a few OS are seeded. Also re-check operador kanban gating — the 'somente leitura' header must change and 'Adicionar ocorrência' button per card must appear. Add data-testid first so subsequent automation is robust.",
+  "rca of the issue": "DashboardOperador/Lider infinite spinner: the call to /api/dashboard/{operador|lider} either (a) returns a status the catch block doesn't handle and somehow re-enters loading=true, or (b) the network call hangs. Most likely backend response shape mismatch — when data is non-null but missing expected keys, the page may not crash but renders empty KPIs. The actual screenshot however shows the spinner still spinning, which means setLoading(false) never fires, which means the promise from getDashboardOperador()/getDashboardLider() never resolves or rejects within the observation window (3-5s). Recommend: (1) wrap with timeout, (2) add reject handling in api.js axios instance, (3) inspect backend logs for slow query on dashboard."
+}
