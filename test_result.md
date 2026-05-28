@@ -228,21 +228,254 @@ frontend:
     priority: "high"
     needs_retesting: true
 
+  - task: "failure_group field on OS model + migrations"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added failure_group VARCHAR(50) to ordens_servico. ALTER TABLE migration in ensure_database_schema. Exposed in OSResponse and build_os_response."
+
+  - task: "Bloqueio por failure_group — POST /ordens-servico returns 409"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "When creating OS with failure_group already open on same equipment, returns 409 with {error, message, os_bloqueante, grupos_disponiveis}. Different failure_group on same equipment is allowed."
+
+  - task: "PATCH /ordens-servico/{id}/ocorrencia — append-only, no downtime change"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New endpoint appends to occurrences JSON, audits as 'adicao_ocorrencia', notifies technician. Does NOT modify downtime_start or status."
+
+  - task: "response_time_min calculation on em_atendimento"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "When OS status → em_atendimento, calculates (now - created_at) in minutes and saves to tempo_resposta. Exposed as response_time_min in OSResponse."
+
+  - task: "POST /auth/tecnico-login — generic sector password"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "No prior auth required. Validates senha_generica against Setor.senha_tecnico_hash, validates employee_id, returns JWT anchored to first active TECNICO user in org."
+
+  - task: "GET /sectors/tecnico-options — public sector list by tenant"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Public endpoint (no auth). Returns [{id, nome}] filtered by tenant_id query param."
+
+  - task: "GET /dashboard/operador — OPERADOR/TECNICO only, sector-scoped KPIs"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Returns: disponibilidade_percent, mttr_minutos, mtbf_horas, os_mes, tempo_resposta_medio_min, os_abertas[], equipamentos_em_manutencao[]. Requires OPERADOR or TECNICO role."
+
+  - task: "GET /dashboard/lider — financials + Pareto + tecnicos_ativos"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Returns all operador KPIs + custo_parada_total, os_por_grupo_falha (Pareto), top5_custo_equipamentos, tecnicos_ativos, pendentes_revisao, os_abertas. Requires LIDER/ADMIN/SUPERUSUARIO."
+
+frontend:
+  - task: "BillingPage with plan cards, usage meters, upgrade flow"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/BillingPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+
+  - task: "Strategic DashboardPage with KPIs, rankings, charts"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/DashboardPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+
+  - task: "UpgradeDialog for plan limit enforcement UX"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/UpgradeDialog.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+
+  - task: "OS page shows downtime cost and review workflow"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+
+  - task: "failure_group chips + obrigatório no formulário de nova OS"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added FAILURE_GROUPS constant and chip selector in create OS modal. failure_group is required before submit. data-testid fg-chip-{value} on each chip."
+
+  - task: "BloqueioModal — 409 handling com chips de grupos disponíveis"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "BloqueioModal component shown when createOrdemServico returns 409 with error=bloqueio_grupo_falha. Shows blocking OS info, chips of available groups (auto-selects first), user can pick and re-open create modal with pre-filled group."
+
+  - task: "TecnicoLoginPage — 3-step stepper (setor → matrícula → confirmação)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/TecnicoLoginPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New page at /login/tecnico. Step 1 loads sectors via getSetoresTecnico(tenantId). Step 2 submits matricula+senha. Step 3 confirms and redirects to /dashboard/operador."
+
+  - task: "DashboardOperadorPage — 5 KPIs + OS list, 60s auto-refresh"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/DashboardOperadorPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Calls getDashboardOperador(). 5 KPI cards (disponibilidade, MTTR, MTBF, OS mês, T.Resposta). OS abertas list. Equipment in maintenance list. 60s refresh. No financials."
+
+  - task: "DashboardLiderPage — 6 KPIs + Recharts Pareto + financeiro BRL"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/DashboardLiderPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Calls getDashboardLider(). 6 KPIs including custo_parada in BRL. Horizontal BarChart Pareto by failure_group. Top-5 equipment by cost. Active technicians. Pending reviews counter."
+
+  - task: "App.js — role-based routing (operador→/dashboard/operador, lider→/dashboard/lider)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added /login/tecnico public route. Protected /dashboard/operador and /dashboard/lider inside AppLayout. PublicRoute and IndexRedirect now redirect by role."
+
+  - task: "KanbanPage — failure_group badge, 30s timers, SLA display, occurrence button operador-only"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/KanbanPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added FAILURE_GROUP_COLORS, failure_group pill badge. Single 30s tick replaces 60s timer. Em aberto: Xh timer for aberta cards. Em manutenção: Xmin for downtime. [SLA: X] in response badge. Occurrence button only for operador; uses patchOcorrencia."
+
+  - task: "AppLayout — sidebar links split by role, page titles for new routes"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/AppLayout.jsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Dashboard nav item split: admin→/dashboard, lider→/dashboard/lider, tecnico+operador→/dashboard/operador. getPageTitle map updated."
+
 agent_communication:
   - agent: "main"
     message: "Implemented all features: Stripe billing, plan limits, downtime cost calculation, review workflow, enhanced dashboard. Backend is running and all new tables/columns created. Test credentials in /app/memory/test_credentials.md"
   - agent: "testing"
     message: "✅ BACKEND TESTING COMPLETE - All 6 high-priority backend tasks tested and working perfectly. Fixed database schema issues (added missing billing and review workflow columns). Fixed route ordering for pending-reviews endpoint. All billing endpoints, plan limits, downtime costs, review workflow, enhanced KPIs, and audit trail are fully functional. Equipamento historico endpoint also includes custo_parada calculations. 9/9 backend tests passed."
+  - agent: "main"
+    message: "FASE 1-9 implementadas: failure_group bloqueio, tecnico login, PATCH ocorrencia, response_time_min, dashboards por perfil (operador/lider), TecnicoLoginPage, DashboardOperadorPage, DashboardLiderPage, Kanban enriquecido, BloqueioModal, failure_group chips no formulário. backend_test.py atualizado com 6 novos testes. Backend não rodando localmente — execute com: cd backend && uvicorn server:app --port 8001, depois: python backend_test.py"
 
 metadata:
   created_by: "main_agent"
-  version: "1.0"
-  test_sequence: 1
+  version: "2.0"
+  test_sequence: 2
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Frontend testing (if required by user)"
+    - "failure_group bloqueio — POST /ordens-servico 409"
+    - "PATCH /ordens-servico/{id}/ocorrencia"
+    - "response_time_min calculation"
+    - "POST /auth/tecnico-login"
+    - "GET /dashboard/operador"
+    - "GET /dashboard/lider"
+    - "BloqueioModal + failure_group chips (frontend)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"

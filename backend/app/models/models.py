@@ -56,6 +56,10 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     nome = Column(String(255), nullable=False)
     role = Column(SQLEnum(UserRole), default=UserRole.OPERADOR)
+    setor = Column(String(100), nullable=True)
+    is_lider = Column(Boolean, default=False)
+    employee_id = Column(String(30), nullable=True)
+    generic_session_sector = Column(String(100), nullable=True)
     ativo = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -157,10 +161,16 @@ class OrdemServico(Base):
     falha_tipo = Column(String(100), nullable=True)
     falha_modo = Column(String(100), nullable=True)
     falha_causa = Column(String(100), nullable=True)
+    failure_group = Column(String(50), nullable=True)
     reincidente = Column(Boolean, default=False)
 
     # Block stop
     bloco_parada_id = Column(UUID(as_uuid=True), nullable=True)
+
+    # Spec v2 fields
+    downtime_start = Column(DateTime(timezone=True), nullable=True)
+    occurrences = Column(Text, nullable=True)
+    technician_employee_id = Column(String(20), nullable=True)
 
     # Review workflow
     review_deadline = Column(DateTime(timezone=True), nullable=True)
@@ -168,6 +178,20 @@ class OrdemServico(Base):
     auto_approved = Column(Boolean, default=False)
 
     __table_args__ = (Index('idx_os_org', 'organization_id'),)
+
+
+class Setor(Base):
+    """Operational sector with a shared technician password for generic login."""
+    __tablename__ = "setores"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    nome = Column(String(100), nullable=False)
+    senha_tecnico_hash = Column(String(255), nullable=False)
+    ativo = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (Index('idx_setor_org', 'organization_id'),)
 
 
 class CustoOS(Base):

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { getKanban, updateOrdemServico, addOcorrenciaOS } from "../lib/api";
+import { getKanban, updateOrdemServico, patchOcorrencia } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -31,6 +31,20 @@ const GRUPO_COLORS = {
   hidráulico: { color: "#3B82F6", bg: "rgba(59,130,246,0.12)" },
   mecanico:   { color: "#8B5CF6", bg: "rgba(139,92,246,0.12)" },
   mecânico:   { color: "#8B5CF6", bg: "rgba(139,92,246,0.12)" },
+};
+
+const FAILURE_GROUP_COLORS = {
+  eletrico:       { color: "#3B82F6", bg: "rgba(59,130,246,0.12)" },
+  elétrico:       { color: "#3B82F6", bg: "rgba(59,130,246,0.12)" },
+  hidraulico:     { color: "#F59E0B", bg: "rgba(245,158,11,0.12)" },
+  hidráulico:     { color: "#F59E0B", bg: "rgba(245,158,11,0.12)" },
+  mecanico:       { color: "#6B7280", bg: "rgba(107,114,128,0.12)" },
+  mecânico:       { color: "#6B7280", bg: "rgba(107,114,128,0.12)" },
+  pneumatico:     { color: "#0D9488", bg: "rgba(13,148,136,0.12)" },
+  pneumático:     { color: "#0D9488", bg: "rgba(13,148,136,0.12)" },
+  instrumentacao: { color: "#8B5CF6", bg: "rgba(139,92,246,0.12)" },
+  instrumentação: { color: "#8B5CF6", bg: "rgba(139,92,246,0.12)" },
+  estrutural:     { color: "#FB923C", bg: "rgba(251,146,60,0.12)" },
 };
 
 // Status transitions allowed from each status
@@ -210,38 +224,32 @@ function OccurrenceModal({ card, onClose, onSubmit }) {
 
 // ─── KanbanCard ──────────────────────────────────────────────────────────────
 
-function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
+function KanbanCard({ card, onDragStart, canDrag, onOccurrence, canOccurrence }) {
   const prio = PRIORIDADE_CONFIG[card.prioridade] || PRIORIDADE_CONFIG.media;
   const tipo = TIPO_CONFIG[card.tipo] || TIPO_CONFIG.corretiva;
 
-  // Live downtime timer (updates every minute)
-  const [liveDowntime, setLiveDowntime] = useState(() => elapsedMin(card.downtime_start));
+  // Single tick forces re-render every 30s for all live timers
+  const [, setTick] = useState(0);
   useEffect(() => {
-    if (!card.downtime_start) return;
-    const id = setInterval(() => setLiveDowntime(elapsedMin(card.downtime_start)), 60000);
+    const id = setInterval(() => setTick(t => t + 1), 30000);
     return () => clearInterval(id);
-  }, [card.downtime_start]);
+  }, []);
 
-  // SLA progress
+  // Live time values (recalculated on each render tick)
   const slaLimit = SLA_MINUTOS[card.prioridade] ?? 120;
   const slaElapsed = elapsedMin(card.created_at);
   const slaRatio = Math.min(1, slaElapsed / slaLimit);
   const slaBarColor = slaRatio >= 1 ? "#EF4444" : slaRatio >= 0.75 ? "#F97316" : "#10B981";
+  const liveDowntime = elapsedMin(card.downtime_start);
 
   // Response time badge
   const isAberta = card.tempo_resposta == null;
   let responseLabel, responseColor, responseBg, ResponseIcon;
   if (isAberta) {
-    const waitMin = slaElapsed;
-    const ratio = waitMin / slaLimit;
-    responseLabel = `Aguardando ${fmtMin(waitMin)}`;
-    if (ratio >= 1) {
-      responseColor = "#EF4444"; responseBg = "rgba(239,68,68,0.12)";
-    } else if (ratio >= 0.75) {
-      responseColor = "#F97316"; responseBg = "rgba(249,115,22,0.12)";
-    } else {
-      responseColor = "#EAB308"; responseBg = "rgba(234,179,8,0.10)";
-    }
+    const ratio = slaElapsed / slaLimit;
+    responseLabel = `Aguardando ${fmtMin(slaElapsed)}`;
+    responseColor = ratio >= 1 ? "#EF4444" : ratio >= 0.75 ? "#F97316" : "#EAB308";
+    responseBg = ratio >= 1 ? "rgba(239,68,68,0.12)" : ratio >= 0.75 ? "rgba(249,115,22,0.12)" : "rgba(234,179,8,0.10)";
     ResponseIcon = Timer;
   } else {
     responseLabel = `Resp: ${fmtMin(card.tempo_resposta)}`;
@@ -250,11 +258,16 @@ function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
     ResponseIcon = Zap;
   }
 
-  // Grupo badge
+  // Equipment group badge
   const grupoKey = (card.grupo_nome || "").toLowerCase();
   const grupoStyle = GRUPO_COLORS[grupoKey] || { color: "#64748B", bg: "rgba(100,116,139,0.12)" };
 
+  // Failure group badge
+  const fgKey = (card.failure_group || "").toLowerCase();
+  const fgStyle = FAILURE_GROUP_COLORS[fgKey];
+
   const showDowntimeTimer = card.downtime_start != null;
+  const showAbertaTimer = card.status === "aberta";
 
   return (
     <div
@@ -284,13 +297,21 @@ function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
         e.currentTarget.style.transform = "none";
       }}
     >
-      {/* Header row: numero + tipo + prioridade + grupo */}
+      {/* Header row: numero + failure_group + tipo + prioridade */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 7, flexWrap: "wrap", gap: 4 }}>
         <span style={{ fontSize: 10, fontFamily: "monospace", color: "rgba(255,255,255,0.4)" }}>
           #{card.numero}
         </span>
         <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-          {card.grupo_nome && (
+          {card.failure_group && fgStyle ? (
+            <span style={{
+              fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 4,
+              background: fgStyle.bg, color: fgStyle.color,
+              textTransform: "uppercase", letterSpacing: "0.04em",
+            }}>
+              {card.failure_group}
+            </span>
+          ) : card.grupo_nome ? (
             <span style={{
               fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 4,
               background: grupoStyle.bg, color: grupoStyle.color,
@@ -298,7 +319,7 @@ function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
             }}>
               {card.grupo_nome}
             </span>
-          )}
+          ) : null}
           <span style={{
             fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 4,
             background: tipo.color + "22", color: tipo.color,
@@ -351,7 +372,20 @@ function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
         }} />
       </div>
 
-      {/* Live downtime timer */}
+      {/* Em aberto timer (status: aberta) */}
+      {showAbertaTimer && (
+        <div style={{
+          display: "inline-flex", alignItems: "center", gap: 4,
+          fontSize: 10, color: "#3B82F6", marginBottom: 8,
+          padding: "2px 7px", background: "rgba(59,130,246,0.1)",
+          border: "1px solid rgba(59,130,246,0.2)", borderRadius: 4,
+        }}>
+          <Clock size={9} />
+          <span>Em aberto: {fmtMin(slaElapsed)}</span>
+        </div>
+      )}
+
+      {/* Em manutenção timer (downtime_start) */}
       {showDowntimeTimer && (
         <div style={{
           display: "inline-flex", alignItems: "center", gap: 4,
@@ -360,11 +394,11 @@ function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
           border: "1px solid rgba(249,115,22,0.2)", borderRadius: 4,
         }}>
           <Package size={9} />
-          <span>Parado há {fmtMin(liveDowntime)}</span>
+          <span>Em manutenção: {fmtMin(liveDowntime)}</span>
         </div>
       )}
 
-      {/* Response time badge */}
+      {/* Response time badge with SLA limit */}
       <div style={{
         display: "inline-flex", alignItems: "center", gap: 4,
         padding: "3px 8px", borderRadius: 6, marginBottom: 8,
@@ -373,6 +407,9 @@ function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
         <ResponseIcon size={10} style={{ color: responseColor, flexShrink: 0 }} />
         <span style={{ fontSize: 10, fontWeight: 700, color: responseColor, letterSpacing: "0.01em" }}>
           {responseLabel}
+        </span>
+        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", marginLeft: 2 }}>
+          [SLA: {fmtMin(slaLimit)}]
         </span>
         {!isAberta && card.dentro_sla === false && (
           <span style={{ fontSize: 9, color: "#EF4444", fontWeight: 700, marginLeft: 2 }}>· Fora do SLA</span>
@@ -410,24 +447,37 @@ function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
         )}
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
-          {/* Occurrence counter */}
-          <button
-            onClick={(e) => { e.stopPropagation(); onOccurrence(card); }}
-            title="Ver / registrar ocorrências"
-            style={{
+          {/* Occurrence button (operador only) or count badge */}
+          {canOccurrence ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onOccurrence(card); }}
+              title="Adicionar ocorrência"
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                padding: "2px 7px", borderRadius: 5, cursor: "pointer",
+                background: (card.occurrences_count ?? 0) > 0
+                  ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.05)",
+                border: (card.occurrences_count ?? 0) > 0
+                  ? "1px solid rgba(139,92,246,0.3)" : "1px solid rgba(255,255,255,0.08)",
+                color: (card.occurrences_count ?? 0) > 0 ? "#8B5CF6" : "rgba(255,255,255,0.3)",
+                fontSize: 10, fontWeight: 600,
+              }}
+            >
+              <MessageSquare size={9} />
+              {card.occurrences_count ?? 0}
+            </button>
+          ) : (card.occurrences_count ?? 0) > 0 ? (
+            <span style={{
               display: "inline-flex", alignItems: "center", gap: 4,
-              padding: "2px 7px", borderRadius: 5, cursor: "pointer",
-              background: (card.occurrences_count ?? 0) > 0
-                ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.05)",
-              border: (card.occurrences_count ?? 0) > 0
-                ? "1px solid rgba(139,92,246,0.3)" : "1px solid rgba(255,255,255,0.08)",
-              color: (card.occurrences_count ?? 0) > 0 ? "#8B5CF6" : "rgba(255,255,255,0.3)",
-              fontSize: 10, fontWeight: 600,
-            }}
-          >
-            <MessageSquare size={9} />
-            {card.occurrences_count ?? 0}
-          </button>
+              padding: "2px 7px", borderRadius: 5,
+              background: "rgba(139,92,246,0.15)",
+              border: "1px solid rgba(139,92,246,0.3)",
+              color: "#8B5CF6", fontSize: 10, fontWeight: 600,
+            }}>
+              <MessageSquare size={9} />
+              {card.occurrences_count}
+            </span>
+          ) : null}
 
           {/* Created at */}
           {card.created_at && (
@@ -452,7 +502,7 @@ function KanbanCard({ card, onDragStart, canDrag, onOccurrence }) {
 
 // ─── KanbanColumn ─────────────────────────────────────────────────────────────
 
-function KanbanColumn({ column, onDrop, dragOverCol, onDragOver, onDragLeave, onDragStart, canDrag, onOccurrence }) {
+function KanbanColumn({ column, onDrop, dragOverCol, onDragOver, onDragLeave, onDragStart, canDrag, onOccurrence, canOccurrence }) {
   const isOver = dragOverCol === column.id;
 
   const COL_COLORS = {
@@ -519,6 +569,7 @@ function KanbanColumn({ column, onDrop, dragOverCol, onDragOver, onDragLeave, on
             onDragStart={onDragStart}
             canDrag={canDrag}
             onOccurrence={onOccurrence}
+            canOccurrence={canOccurrence}
           />
         ))}
       </div>
@@ -567,7 +618,7 @@ export default function KanbanPage() {
 
   const handleOccurrenceSubmit = useCallback(async (osId, descricao) => {
     try {
-      await addOcorrenciaOS(osId, descricao);
+      await patchOcorrencia(osId, descricao);
       toast.success("Ocorrência registrada");
       load();
       return true;
@@ -709,6 +760,7 @@ export default function KanbanPage() {
               onDragStart={handleDragStart}
               canDrag={canDrag}
               onOccurrence={handleOccurrence}
+              canOccurrence={user?.role === "operador"}
             />
           ))}
         </div>

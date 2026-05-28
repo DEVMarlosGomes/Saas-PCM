@@ -10,7 +10,10 @@ import { Wrench, LogIn } from "lucide-react";
 // Pages
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
+import TecnicoLoginPage from "./pages/TecnicoLoginPage";
 import DashboardPage from "./pages/DashboardPage";
+import DashboardOperadorPage from "./pages/DashboardOperadorPage";
+import DashboardLiderPage from "./pages/DashboardLiderPage";
 import EquipamentosPage from "./pages/EquipamentosPage";
 import OrdensServicoPage from "./pages/OrdensServicoPage";
 import PlanosPreventivosPage from "./pages/PlanosPreventivosPage";
@@ -207,6 +210,8 @@ const PublicRoute = ({ children }) => {
 
   if (user && user !== false) {
     if (user.role === "superusuario") return <Navigate to="/superuser" replace />;
+    if (user.role === "operador" || user.role === "tecnico") return <Navigate to="/dashboard/operador" replace />;
+    if (user.role === "lider") return <Navigate to="/dashboard/lider" replace />;
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -216,6 +221,8 @@ const PublicRoute = ({ children }) => {
 function IndexRedirect() {
   const { user } = useAuth();
   if (user?.role === "superusuario") return <Navigate to="/superuser" replace />;
+  if (user?.role === "operador" || user?.role === "tecnico") return <Navigate to="/dashboard/operador" replace />;
+  if (user?.role === "lider") return <Navigate to="/dashboard/lider" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -224,10 +231,13 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
       <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
+      <Route path="/login/tecnico" element={<TecnicoLoginPage />} />
 
       <Route path="/" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route index element={<IndexRedirect />} />
         <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="dashboard/operador" element={<DashboardOperadorPage />} />
+        <Route path="dashboard/lider" element={<DashboardLiderPage />} />
         <Route path="equipamentos" element={<EquipamentosPage />} />
         <Route path="ordens-servico" element={<OrdensServicoPage />} />
         <Route path="planos-preventivos" element={<PlanosPreventivosPage />} />

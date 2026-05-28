@@ -161,6 +161,31 @@ export const AuthProvider = ({ children }) => {
     setNeedsTechnicianSession(false);
   };
 
+  const loginTecnico = async (senha_generica, sector_id, employee_id) => {
+    try {
+      const { data } = await axios.post(`${API}/api/auth/tecnico-login`, {
+        senha_generica, sector_id, employee_id,
+      });
+      const token = data.token || data.access_token;
+      if (token) {
+        setAccessToken(token);
+        localStorage.setItem(TOKEN_KEY, token);
+      }
+      // Build a user-compatible object from the tecnico response
+      const userData = {
+        ...data.user,
+        access_token: token,
+        needs_technician_session: false,
+      };
+      localStorage.setItem(USER_KEY, JSON.stringify(userData));
+      setUser(userData);
+      setNeedsTechnicianSession(false);
+      return { success: true, user: data.user };
+    } catch (e) {
+      return { success: false, error: formatRequestError(e) };
+    }
+  };
+
   const endTechnicianSession = async () => {
     try {
       const token = readStoredToken();
@@ -195,7 +220,7 @@ export const AuthProvider = ({ children }) => {
       user, loading,
       isAuthenticated: !!user && user !== false,
       needsTechnicianSession,
-      login, register, logout, refreshToken, checkAuth, completeTechnicianSession, endTechnicianSession,
+      login, register, logout, refreshToken, checkAuth, completeTechnicianSession, endTechnicianSession, loginTecnico,
     }}>
       {children}
     </AuthContext.Provider>

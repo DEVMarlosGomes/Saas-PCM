@@ -40,7 +40,9 @@ const navSections = [
   {
     label: "Principal",
     items: [
-      { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", roles: ["admin", "lider", "tecnico", "operador"] },
+      { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", roles: ["admin"] },
+      { to: "/dashboard/lider", icon: LayoutDashboard, label: "Dashboard", roles: ["lider"] },
+      { to: "/dashboard/operador", icon: LayoutDashboard, label: "Dashboard", roles: ["tecnico", "operador"] },
     ],
   },
   {
@@ -135,6 +137,8 @@ export default function AppLayout() {
     const path = location.pathname.replace("/", "");
     const map = {
       dashboard: "Dashboard",
+      "dashboard/operador": "Dashboard do Operador",
+      "dashboard/lider": "Dashboard do Líder",
       equipamentos: "Equipamentos",
       "ordens-servico": "Ordens de Serviço",
       "planos-preventivos": "Manutenção Preventiva",

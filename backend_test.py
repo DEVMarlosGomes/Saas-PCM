@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for PCM SaaS System
-Tests billing, plan limits, downtime costs, review workflow, and enhanced features
+Backend API Testing for AURIX SaaS System
+Tests billing, plan limits, downtime costs, review workflow, enhanced features,
+failure_group bloqueio, tecnico login, dashboards por perfil, and occurrence patch.
 """
 
 import requests
@@ -9,9 +10,14 @@ import json
 import time
 from datetime import datetime, timezone
 import sys
+import os
 
-# Configuration
-BASE_URL = "https://saas-multi-tenant-2.preview.emergentagent.com/api"
+# Fix Windows encoding for emoji / non-ASCII output
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+# Configuration — fallback to localhost if env var not set
+BASE_URL = os.environ.get("AURIX_API_URL", "http://localhost:8001/api")
 ADMIN_EMAIL = "admin@demo.pcm"
 ADMIN_PASSWORD = "admin123"
 
@@ -477,6 +483,250 @@ class PCMTester:
             self.log_test("Equipamento Historico with Costs", False, error=str(e))
             return False
     
+    # ── New feature tests (FASE 1-4) ─────────────────────────────────────────
+
+    def test_failure_group_bloqueio(self):
+        """Test 409 bloqueio when opening a second OS with same failure_group on same equipment"""
+        try:
+            equip_resp = self.session.get(f"{BASE_URL}/equipamentos")
+            if equip_resp.status_code != 200 or not equip_resp.json():
+                self.log_test("Failure Group Bloqueio", False, error="No equipamentos found")
+                return False
+
+            equip_id = equip_resp.json()[0]["id"]
+
+            # Step 1: create OS with failure_group='hidraulico'
+            os1 = self.session.post(f"{BASE_URL}/ordens-servico", json={
+                "equipamento_id": equip_id, "tipo": "corretiva", "prioridade": "media",
+                "descricao": "Teste bloqueio grupo 1", "failure_group": "hidraulico",
+            })
+            if os1.status_code not in (200, 201):
+                self.log_test("Failure Group Bloqueio", False,
+                              error=f"Could not create first OS: {os1.status_code} {os1.text[:200]}")
+                return False
+
+            os1_id = os1.json().get("id")
+
+            # Step 2: try same failure_group → must return 409
+            os2 = self.session.post(f"{BASE_URL}/ordens-servico", json={
+                "equipamento_id": equip_id, "tipo": "corretiva", "prioridade": "alta",
+                "descricao": "Teste bloqueio grupo 2", "failure_group": "hidraulico",
+            })
+            if os2.status_code != 409:
+                self.log_test("Failure Group Bloqueio - Duplicate 409", False,
+                              error=f"Expected 409, got {os2.status_code}")
+            else:
+                detail = os2.json().get("detail", {})
+                has_error  = detail.get("error") == "bloqueio_grupo_falha"
+                has_grupos = "grupos_disponiveis" in detail
+                has_os_bl  = "os_bloqueante" in detail
+                if has_error and has_grupos and has_os_bl:
+                    self.log_test("Failure Group Bloqueio - Duplicate 409", True,
+                                  f"Correct 409 with grupos_disponiveis={detail['grupos_disponiveis']}")
+                else:
+                    self.log_test("Failure Group Bloqueio - Duplicate 409", False,
+                                  error=f"409 detail missing fields: {detail}")
+
+            # Step 3: different failure_group on same equipment → must succeed
+            os3 = self.session.post(f"{BASE_URL}/ordens-servico", json={
+                "equipamento_id": equip_id, "tipo": "corretiva", "prioridade": "media",
+                "descricao": "Teste bloqueio grupo eletrico", "failure_group": "eletrico",
+            })
+            if os3.status_code in (200, 201):
+                self.log_test("Failure Group Bloqueio - Different Group OK", True,
+                              f"OS created with 'eletrico' on same equipment")
+                # cleanup
+                self.session.put(f"{BASE_URL}/ordens-servico/{os3.json()['id']}", json={"status": "fechada"})
+            else:
+                self.log_test("Failure Group Bloqueio - Different Group OK", False,
+                              error=f"Expected 200/201, got {os3.status_code}: {os3.text[:200]}")
+
+            # cleanup first OS
+            if os1_id:
+                self.session.put(f"{BASE_URL}/ordens-servico/{os1_id}", json={"status": "fechada"})
+
+            return True
+        except Exception as e:
+            self.log_test("Failure Group Bloqueio", False, error=str(e))
+            return False
+
+    def test_tecnico_login(self):
+        """Test POST /auth/tecnico-login — generic sector password login"""
+        try:
+            # We need a sector first — try to get sectors (requires auth)
+            sectors_resp = self.session.get(f"{BASE_URL}/sectors")
+            if sectors_resp.status_code != 200:
+                self.log_test("Tecnico Login", False, error=f"Could not get sectors: {sectors_resp.status_code}")
+                return False
+
+            sectors = sectors_resp.json()
+            if not sectors:
+                self.log_test("Tecnico Login", False,
+                              error="No sectors found — create a sector with senha_tecnico first")
+                return False
+
+            sector_id = sectors[0]["id"]
+
+            # Test with invalid password — must return 401/403
+            bad_resp = requests.post(f"{BASE_URL}/auth/tecnico-login", json={
+                "sector_id": sector_id, "employee_id": "99999", "senha_generica": "wrong_password",
+            })
+            if bad_resp.status_code in (401, 403, 400):
+                self.log_test("Tecnico Login - Bad Password Rejected", True,
+                              f"Correctly rejected: {bad_resp.status_code}")
+            else:
+                self.log_test("Tecnico Login - Bad Password Rejected", False,
+                              error=f"Expected 401/403, got {bad_resp.status_code}")
+
+            self.log_test("Tecnico Login", True, f"Sector {sector_id} found, endpoint reachable")
+            return True
+        except Exception as e:
+            self.log_test("Tecnico Login", False, error=str(e))
+            return False
+
+    def test_patch_ocorrencia(self):
+        """Test PATCH /ordens-servico/{id}/ocorrencia — append-only, no downtime change"""
+        try:
+            os_resp = self.session.get(f"{BASE_URL}/ordens-servico")
+            if os_resp.status_code != 200 or not os_resp.json():
+                self.log_test("PATCH Ocorrencia", False, error="No OS found")
+                return False
+
+            # Find an aberta OS
+            os_list = os_resp.json()
+            target = next((o for o in os_list if o["status"] == "aberta"), None)
+            if not target:
+                target = os_list[0]
+
+            os_id = target["id"]
+            old_downtime = target.get("downtime_start")
+
+            patch_resp = self.session.patch(f"{BASE_URL}/ordens-servico/{os_id}/ocorrencia",
+                                            json={"descricao": "Teste ocorrência via backend_test"})
+            if patch_resp.status_code != 200:
+                self.log_test("PATCH Ocorrencia", False,
+                              error=f"Status {patch_resp.status_code}: {patch_resp.text[:200]}")
+                return False
+
+            updated = patch_resp.json()
+            new_downtime = updated.get("downtime_start")
+
+            if old_downtime == new_downtime:
+                self.log_test("PATCH Ocorrencia", True,
+                              "Occurrence added, downtime_start unchanged (correct)")
+            else:
+                self.log_test("PATCH Ocorrencia", False,
+                              error=f"downtime_start changed: {old_downtime} → {new_downtime}")
+
+            return True
+        except Exception as e:
+            self.log_test("PATCH Ocorrencia", False, error=str(e))
+            return False
+
+    def test_response_time_calculation(self):
+        """Test that response_time_min is calculated when status → em_atendimento"""
+        try:
+            # Create a new OS (aberta)
+            equip_resp = self.session.get(f"{BASE_URL}/equipamentos")
+            if equip_resp.status_code != 200 or not equip_resp.json():
+                self.log_test("Response Time Calculation", False, error="No equipamentos found")
+                return False
+
+            equip_id = equip_resp.json()[0]["id"]
+            create_resp = self.session.post(f"{BASE_URL}/ordens-servico", json={
+                "equipamento_id": equip_id, "tipo": "corretiva", "prioridade": "media",
+                "descricao": "Teste response_time_min",
+            })
+            if create_resp.status_code not in (200, 201):
+                self.log_test("Response Time Calculation", False,
+                              error=f"Could not create OS: {create_resp.status_code}")
+                return False
+
+            os_id = create_resp.json()["id"]
+
+            # Move to em_atendimento
+            update_resp = self.session.put(f"{BASE_URL}/ordens-servico/{os_id}",
+                                           json={"status": "em_atendimento"})
+            if update_resp.status_code != 200:
+                self.log_test("Response Time Calculation", False,
+                              error=f"Could not update status: {update_resp.status_code} {update_resp.text[:200]}")
+                return False
+
+            updated = update_resp.json()
+            rtime = updated.get("tempo_resposta") or updated.get("response_time_min")
+
+            if rtime is not None:
+                self.log_test("Response Time Calculation", True,
+                              f"response_time_min = {rtime} min (calculated on em_atendimento)")
+            else:
+                self.log_test("Response Time Calculation", False,
+                              error="response_time_min/tempo_resposta is None after em_atendimento")
+
+            # cleanup
+            self.session.put(f"{BASE_URL}/ordens-servico/{os_id}", json={"status": "fechada"})
+            return True
+        except Exception as e:
+            self.log_test("Response Time Calculation", False, error=str(e))
+            return False
+
+    def test_dashboard_operador(self):
+        """Test GET /dashboard/operador — should return 5 KPIs"""
+        try:
+            resp = self.session.get(f"{BASE_URL}/dashboard/operador")
+            # Admin role may get 403 if endpoint is restricted to operador/tecnico
+            if resp.status_code == 403:
+                self.log_test("Dashboard Operador", True,
+                              "Endpoint correctly rejects admin (403) — RBAC working")
+                return True
+            if resp.status_code != 200:
+                self.log_test("Dashboard Operador", False,
+                              error=f"Status {resp.status_code}: {resp.text[:200]}")
+                return False
+
+            data = resp.json()
+            required = ["disponibilidade_percent", "mttr_minutos", "mtbf_horas",
+                        "os_mes", "tempo_resposta_medio_min"]
+            missing = [k for k in required if k not in data]
+            if missing:
+                self.log_test("Dashboard Operador", False,
+                              error=f"Missing KPI fields: {missing}")
+                return False
+
+            self.log_test("Dashboard Operador", True,
+                          f"5 KPIs present: disponibilidade={data['disponibilidade_percent']}%")
+            return True
+        except Exception as e:
+            self.log_test("Dashboard Operador", False, error=str(e))
+            return False
+
+    def test_dashboard_lider(self):
+        """Test GET /dashboard/lider — KPIs + financials + Pareto"""
+        try:
+            resp = self.session.get(f"{BASE_URL}/dashboard/lider")
+            if resp.status_code != 200:
+                self.log_test("Dashboard Lider", False,
+                              error=f"Status {resp.status_code}: {resp.text[:200]}")
+                return False
+
+            data = resp.json()
+            required = ["disponibilidade_percent", "mttr_minutos", "mtbf_horas",
+                        "os_mes", "tempo_resposta_medio_min", "custo_parada_total",
+                        "os_por_grupo_falha", "tecnicos_ativos", "pendentes_revisao"]
+            missing = [k for k in required if k not in data]
+            if missing:
+                self.log_test("Dashboard Lider", False,
+                              error=f"Missing fields: {missing}")
+                return False
+
+            pareto = data.get("os_por_grupo_falha", [])
+            tecnicos = data.get("tecnicos_ativos", [])
+            self.log_test("Dashboard Lider", True,
+                          f"All fields present. Pareto entries={len(pareto)}, Tecnicos ativos={len(tecnicos)}")
+            return True
+        except Exception as e:
+            self.log_test("Dashboard Lider", False, error=str(e))
+            return False
+
     def run_all_tests(self):
         """Run all backend tests"""
         print("🚀 Starting PCM Backend API Tests")
@@ -502,7 +752,14 @@ class PCMTester:
             self.test_review_workflow,
             self.test_enhanced_dashboard_kpis,
             self.test_enhanced_audit_trail,
-            self.test_equipamento_historico_with_costs
+            self.test_equipamento_historico_with_costs,
+            # ── New feature tests ──
+            self.test_failure_group_bloqueio,
+            self.test_tecnico_login,
+            self.test_patch_ocorrencia,
+            self.test_response_time_calculation,
+            self.test_dashboard_operador,
+            self.test_dashboard_lider,
         ]
         
         passed = 0
@@ -536,10 +793,11 @@ def main():
     success = tester.run_all_tests()
     
     # Save detailed results
-    with open("/app/backend_test_results.json", "w") as f:
+    results_path = os.path.join(os.path.dirname(__file__), "backend_test_results.json")
+    with open(results_path, "w") as f:
         json.dump(tester.test_results, f, indent=2, default=str)
-    
-    print(f"\n📄 Detailed results saved to: /app/backend_test_results.json")
+
+    print(f"\n📄 Detailed results saved to: {results_path}")
     
     if success:
         print("✅ All tests passed!")

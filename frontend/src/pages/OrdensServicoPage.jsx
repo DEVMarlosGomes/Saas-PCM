@@ -14,7 +14,7 @@ import { useUpgradeDialog } from "../hooks/useUpgradeDialog";
 import {
   Plus, Search, Wrench, Clock, AlertTriangle, CheckCircle, Eye, Play,
   FileCheck, DollarSign, Filter, X, Loader2, TrendingDown, Shield,
-  ArrowRight, Timer, RefreshCw, Zap,
+  ArrowRight, Timer, RefreshCw, Zap, Ban,
 } from "lucide-react";
 
 const statusConfig = {
@@ -40,6 +40,119 @@ const tipoConfig = {
   preditiva: { label: "Preditiva", color: "bg-blue-500/10 text-blue-500 border-blue-500/20" },
 };
 
+const FAILURE_GROUPS = [
+  { value: "eletrico",       label: "Elétrico",       color: "#3B82F6" },
+  { value: "hidraulico",     label: "Hidráulico",     color: "#F59E0B" },
+  { value: "mecanico",       label: "Mecânico",       color: "#6B7280" },
+  { value: "pneumatico",     label: "Pneumático",     color: "#0D9488" },
+  { value: "instrumentacao", label: "Instrumentação", color: "#8B5CF6" },
+  { value: "estrutural",     label: "Estrutural",     color: "#FB923C" },
+  { value: "outro",          label: "Outro",          color: "#64748B" },
+];
+
+const STATUS_LABELS_MAP = {
+  aberta: "Aberta", em_atendimento: "Em Atendimento",
+  aguardando_peca: "Ag. Peça", aguardando_revisao: "Ag. Revisão", revisada: "Revisada",
+};
+
+// ─── BloqueioModal ────────────────────────────────────────────────────────────
+
+function BloqueioModal({ data, onClose, onConfirm }) {
+  const [selectedGroup, setSelectedGroup] = useState(data.grupos_disponiveis?.[0] || "");
+
+  const getLabel = (val) => FAILURE_GROUPS.find(g => g.value === val)?.label || val;
+  const getColor = (val) => FAILURE_GROUPS.find(g => g.value === val)?.color || "#64748B";
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-2xl"
+        onClick={e => e.stopPropagation()}
+        data-testid="bloqueio-modal"
+      >
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+            <Ban className="h-5 w-5 text-amber-500" />
+          </div>
+          <div>
+            <h3 className="font-heading font-bold text-base">Bloqueio por Grupo de Falha</h3>
+            <p className="text-xs text-muted-foreground">Já existe uma OS aberta neste grupo para o equipamento</p>
+          </div>
+        </div>
+
+        <p className="text-sm text-muted-foreground mb-4 leading-relaxed">{data.message}</p>
+
+        {data.os_bloqueante && (
+          <div className="p-3 rounded-lg bg-muted/40 border border-border/50 mb-4">
+            <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider mb-1.5">OS bloqueante</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono font-bold text-sm">#{data.os_bloqueante.numero}</span>
+              <Badge className="text-[10px] rounded border bg-amber-500/10 text-amber-500 border-amber-500/20">
+                {STATUS_LABELS_MAP[data.os_bloqueante.status] || data.os_bloqueante.status}
+              </Badge>
+              <span className="text-xs text-muted-foreground">[{getLabel(data.os_bloqueante.failure_group)}]</span>
+            </div>
+          </div>
+        )}
+
+        {data.grupos_disponiveis?.length > 0 ? (
+          <div className="mb-6">
+            <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider mb-3">
+              Selecione um grupo disponível para continuar:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {data.grupos_disponiveis.map(g => {
+                const color = getColor(g);
+                const isSelected = selectedGroup === g;
+                return (
+                  <button
+                    key={g}
+                    type="button"
+                    data-testid={`bloqueio-group-${g}`}
+                    onClick={() => setSelectedGroup(g)}
+                    style={isSelected ? { background: `${color}22`, borderColor: color, color } : {}}
+                    className={`text-sm px-3 py-1.5 rounded-lg border transition-all font-semibold ${
+                      isSelected ? "" : "border-border bg-muted/50 hover:bg-muted text-foreground"
+                    }`}
+                  >
+                    {getLabel(g)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="mb-6 p-3 rounded-lg bg-destructive/5 border border-destructive/15">
+            <p className="text-sm text-destructive font-medium">
+              Todos os grupos de falha estão ocupados para este equipamento.
+            </p>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Button variant="outline" className="flex-1 rounded-lg" onClick={onClose} data-testid="bloqueio-cancelar">
+            Cancelar
+          </Button>
+          {data.grupos_disponiveis?.length > 0 && (
+            <Button
+              className="flex-1 rounded-lg"
+              onClick={() => onConfirm(selectedGroup)}
+              disabled={!selectedGroup}
+              data-testid="bloqueio-confirmar"
+            >
+              <ArrowRight className="h-4 w-4 mr-2" />
+              Usar {getLabel(selectedGroup)}
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OrdensServicoPage() {
   const { user } = useAuth();
   const { upgradeOpen, upgradeMessage, handleApiError, closeUpgrade } = useUpgradeDialog();
@@ -61,9 +174,10 @@ export default function OrdensServicoPage() {
   const [showCustoModal, setShowCustoModal] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
 
+  const [bloqueioModal, setBloqueioModal] = useState(null);
   const [formData, setFormData] = useState({
     equipamento_id: "", tipo: "corretiva", prioridade: "media", descricao: "",
-    falha_tipo: "", falha_modo: "", falha_causa: ""
+    falha_tipo: "", falha_modo: "", falha_causa: "", failure_group: "",
   });
   const [custoForm, setCustoForm] = useState({
     tipo: "consumo", descricao: "", valor: "", quantidade: "1"
@@ -103,10 +217,22 @@ export default function OrdensServicoPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData(); }, [filterStatus, filterTipo]);
 
+  const FORM_RESET = { equipamento_id: "", tipo: "corretiva", prioridade: "media", descricao: "", falha_tipo: "", falha_modo: "", falha_causa: "", failure_group: "" };
+
+  const handleBloqueioConfirm = (selectedGroup) => {
+    setBloqueioModal(null);
+    setFormData(prev => ({ ...prev, failure_group: selectedGroup }));
+    setShowCreateModal(true);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.equipamento_id || !formData.descricao) {
       toast.error("Preencha equipamento e descrição");
+      return;
+    }
+    if (!formData.failure_group) {
+      toast.error("Selecione o grupo de falha");
       return;
     }
     setCreating(true);
@@ -114,9 +240,17 @@ export default function OrdensServicoPage() {
       await createOrdemServico(formData);
       toast.success("OS criada com sucesso!");
       setShowCreateModal(false);
-      setFormData({ equipamento_id: "", tipo: "corretiva", prioridade: "media", descricao: "", falha_tipo: "", falha_modo: "", falha_causa: "" });
+      setFormData(FORM_RESET);
       loadData();
     } catch (error) {
+      if (error.response?.status === 409) {
+        const detail = error.response.data?.detail;
+        if (detail?.error === "bloqueio_grupo_falha") {
+          setShowCreateModal(false);
+          setBloqueioModal(detail);
+          return;
+        }
+      }
       if (!handleApiError(error)) {
         toast.error(error.response?.data?.detail || "Erro ao criar OS");
       }
@@ -698,6 +832,35 @@ export default function OrdensServicoPage() {
                 />
               </div>
 
+              <div className="space-y-2">
+                <Label>
+                  Grupo de Falha *{" "}
+                  {!formData.failure_group && (
+                    <span className="text-destructive text-xs font-normal">(obrigatório)</span>
+                  )}
+                </Label>
+                <div className="flex flex-wrap gap-2" data-testid="failure-group-chips">
+                  {FAILURE_GROUPS.map(fg => (
+                    <button
+                      key={fg.value}
+                      type="button"
+                      data-testid={`fg-chip-${fg.value}`}
+                      style={formData.failure_group === fg.value
+                        ? { background: `${fg.color}22`, borderColor: fg.color, color: fg.color }
+                        : {}}
+                      className={`text-xs px-3 py-1.5 rounded-lg border transition-all font-semibold ${
+                        formData.failure_group === fg.value
+                          ? ""
+                          : "border-border bg-muted/50 hover:bg-muted text-foreground"
+                      }`}
+                      onClick={() => setFormData({ ...formData, failure_group: fg.value })}
+                    >
+                      {fg.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {formData.tipo === "corretiva" && (
                 <div className="grid grid-cols-3 gap-2">
                   {[
@@ -768,6 +931,14 @@ export default function OrdensServicoPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {bloqueioModal && (
+        <BloqueioModal
+          data={bloqueioModal}
+          onClose={() => setBloqueioModal(null)}
+          onConfirm={handleBloqueioConfirm}
+        />
       )}
 
       <UpgradeDialog open={upgradeOpen} onClose={closeUpgrade} message={upgradeMessage} />

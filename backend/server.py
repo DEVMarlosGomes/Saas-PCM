@@ -276,8 +276,9 @@ class OrdemServico(Base):
     falha_tipo = Column(String(100), nullable=True)
     falha_modo = Column(String(100), nullable=True)
     falha_causa = Column(String(100), nullable=True)
+    failure_group = Column(String(50), nullable=True)   # eletrico|hidraulico|mecanico|pneumatico|instrumentacao|estrutural|outro
     reincidente = Column(Boolean, default=False)
-    
+
     # Bloco de parada
     bloco_parada_id = Column(UUID(as_uuid=True), nullable=True)
 
@@ -305,9 +306,23 @@ class CustoOS(Base):
     quantidade = Column(Float, default=1.0)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class Setor(Base):
+    """Setor operacional com senha genérica compartilhada para login de técnicos."""
+    __tablename__ = "setores"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    nome = Column(String(100), nullable=False)
+    senha_tecnico_hash = Column(String(255), nullable=False)
+    ativo = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (Index('idx_setor_org', 'organization_id'),)
+
+
 class PlanoPreventivo(Base):
     __tablename__ = "planos_preventivos"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
     equipamento_id = Column(UUID(as_uuid=True), ForeignKey("equipamentos.id"), nullable=False)
@@ -487,6 +502,21 @@ class TechnicianSessionRequest(BaseModel):
     sector: str
     employee_id: str
 
+class TecnicoLoginRequest(BaseModel):
+    senha_generica: str
+    sector_id: str
+    employee_id: str
+
+class SetorCreate(BaseModel):
+    nome: str
+    senha_tecnico: str
+
+class SetorResponse(BaseModel):
+    id: str
+    nome: str
+    organization_id: str
+    ativo: bool
+
 class GrupoCreate(BaseModel):
     nome: str
     descricao: Optional[str] = None
@@ -560,6 +590,7 @@ class OSUpdate(BaseModel):
     falha_tipo: Optional[str] = None
     falha_modo: Optional[str] = None
     falha_causa: Optional[str] = None
+    failure_group: Optional[str] = None
     review_notes: Optional[str] = None
 
 class OSResponse(BaseModel):
@@ -590,6 +621,7 @@ class OSResponse(BaseModel):
     fim_atendimento: Optional[datetime]
     downtime_start: Optional[datetime] = None
     tempo_resposta: Optional[int]
+    response_time_min: Optional[int] = None  # alias de tempo_resposta (minutos abertura→início atendimento)
     tempo_reparo: Optional[int]
     tempo_total: Optional[int]
     dentro_sla: bool
@@ -702,6 +734,18 @@ def ensure_database_schema():
             "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS downtime_start TIMESTAMPTZ",
             "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS occurrences TEXT",
             "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS technician_employee_id VARCHAR(20)",
+            # Spec v3 — ordens_servico: failure_group
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS failure_group VARCHAR(50)",
+            # Spec v3 — setores (login genérico de técnico)
+            """CREATE TABLE IF NOT EXISTS setores (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                organization_id UUID NOT NULL REFERENCES organizations(id),
+                nome VARCHAR(100) NOT NULL,
+                senha_tecnico_hash VARCHAR(255) NOT NULL,
+                ativo BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_setor_org ON setores (organization_id)",
             # Spec v2 — UserRole enum extension (superusuario)
             "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'superusuario' BEFORE 'admin'",
             # Spec v2 — StatusOS enum extension (aguardando_peca)
@@ -1353,6 +1397,7 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
         fim_atendimento=o.fim_atendimento,
         downtime_start=getattr(o, "downtime_start", None),
         tempo_resposta=o.tempo_resposta,
+        response_time_min=o.tempo_resposta,
         tempo_reparo=o.tempo_reparo, tempo_total=o.tempo_total,
         dentro_sla=o.dentro_sla, falha_tipo=o.falha_tipo,
         falha_modo=o.falha_modo, falha_causa=o.falha_causa,
@@ -1636,6 +1681,103 @@ async def clear_technician_session(
     user.generic_session_sector = None
     db.commit()
     return {"message": "Sessão de turno encerrada."}
+
+
+@api_router.post("/auth/tecnico-login")
+async def tecnico_login(
+    data: TecnicoLoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """
+    Login genérico para técnicos de manutenção via senha compartilhada do setor.
+    Não requer conta individual prévia — identifica o técnico pela matrícula (employee_id).
+    Se a matrícula coincidir com um usuário cadastrado, usa o nome dele; caso contrário usa a matrícula como nome.
+    """
+    ensure_database_schema()
+
+    setor = db.query(Setor).filter(
+        Setor.id == data.sector_id,
+        Setor.ativo == True,
+    ).first()
+    if not setor:
+        raise HTTPException(status_code=404, detail="Setor não encontrado ou inativo.")
+
+    if not verify_password(data.senha_generica, setor.senha_tecnico_hash):
+        raise HTTPException(status_code=401, detail="Senha genérica inválida.")
+
+    if not data.employee_id.strip():
+        raise HTTPException(status_code=400, detail="Matrícula obrigatória.")
+
+    employee_id = data.employee_id.strip()
+
+    # Tenta achar um usuário registrado com essa matrícula na mesma organização
+    usuario_registrado = db.query(User).filter(
+        User.organization_id == setor.organization_id,
+        User.employee_id == employee_id,
+        User.ativo == True,
+    ).first()
+
+    nome_funcionario = usuario_registrado.nome if usuario_registrado else employee_id
+
+    # Resolve o user_id para o token: usa o cadastrado ou o primeiro TECNICO da org como âncora
+    if usuario_registrado:
+        user_id = str(usuario_registrado.id)
+        user_email = usuario_registrado.email
+        # Grava o setor na sessão do usuário
+        usuario_registrado.generic_session_sector = setor.nome
+        usuario_registrado.employee_id = employee_id
+        db.commit()
+    else:
+        # Sem cadastro: procura um usuário TECNICO genérico da org para emitir o token
+        tecnico_generico = db.query(User).filter(
+            User.organization_id == setor.organization_id,
+            User.role == UserRole.TECNICO,
+            User.ativo == True,
+        ).first()
+        if not tecnico_generico:
+            raise HTTPException(
+                status_code=404,
+                detail="Nenhum usuário técnico cadastrado nesta organização. Cadastre ao menos um técnico.",
+            )
+        user_id = str(tecnico_generico.id)
+        user_email = tecnico_generico.email
+        # Usa employee_id passado como matrícula ativa da sessão
+        tecnico_generico.generic_session_sector = setor.nome
+        tecnico_generico.employee_id = employee_id
+        db.commit()
+
+    access_token = create_access_token(user_id, user_email)
+    refresh_token = create_refresh_token(user_id)
+    set_auth_cookies(response, access_token, refresh_token)
+
+    return {
+        "token": access_token,
+        "user": {
+            "role": "tecnico",
+            "employee_id": employee_id,
+            "sector_id": str(setor.id),
+            "sector_name": setor.nome,
+            "nome_funcionario": nome_funcionario,
+        },
+    }
+
+
+@api_router.get("/sectors/tecnico-options")
+async def get_sectors_for_tecnico(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Lista setores disponíveis para o login genérico do técnico.
+    Não requer autenticação — apenas tenant_id (organization_id) como query param.
+    """
+    ensure_database_schema()
+    setores = db.query(Setor).filter(
+        Setor.organization_id == tenant_id,
+        Setor.ativo == True,
+    ).order_by(Setor.nome).all()
+    return [{"id": str(s.id), "nome": s.nome} for s in setores]
 
 
 # ========== USERS ENDPOINTS ==========
@@ -2035,6 +2177,84 @@ async def create_subgrupo(data: SubgrupoCreate, user: User = Depends(get_current
         descricao=subgrupo.descricao, organization_id=str(subgrupo.organization_id), created_at=subgrupo.created_at
     )
 
+# ========== SETORES ENDPOINTS ==========
+@api_router.post("/sectors", response_model=SetorResponse, status_code=201)
+async def create_setor(
+    data: SetorCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Cria um setor com senha genérica para login de técnicos. Apenas ADMIN."""
+    if user.role not in (UserRole.ADMIN, UserRole.SUPERUSUARIO):
+        raise HTTPException(status_code=403, detail="Apenas administradores podem criar setores.")
+    if not data.nome.strip():
+        raise HTTPException(status_code=400, detail="Nome do setor obrigatório.")
+    if len(data.senha_tecnico) < 4:
+        raise HTTPException(status_code=400, detail="A senha genérica deve ter ao menos 4 caracteres.")
+
+    setor = Setor(
+        organization_id=user.organization_id,
+        nome=data.nome.strip(),
+        senha_tecnico_hash=hash_password(data.senha_tecnico),
+    )
+    db.add(setor)
+    db.commit()
+    db.refresh(setor)
+    return SetorResponse(id=str(setor.id), nome=setor.nome, organization_id=str(setor.organization_id), ativo=setor.ativo)
+
+
+@api_router.get("/sectors", response_model=List[SetorResponse])
+async def list_setores(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Lista setores da organização. ADMIN e LIDER."""
+    if user.role not in (UserRole.ADMIN, UserRole.SUPERUSUARIO, UserRole.LIDER):
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    setores = db.query(Setor).filter(Setor.organization_id == user.organization_id).order_by(Setor.nome).all()
+    return [SetorResponse(id=str(s.id), nome=s.nome, organization_id=str(s.organization_id), ativo=s.ativo) for s in setores]
+
+
+@api_router.put("/sectors/{sector_id}", response_model=SetorResponse)
+async def update_setor(
+    sector_id: str,
+    data: SetorCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Atualiza nome e/ou senha genérica de um setor. Apenas ADMIN."""
+    if user.role not in (UserRole.ADMIN, UserRole.SUPERUSUARIO):
+        raise HTTPException(status_code=403, detail="Apenas administradores podem editar setores.")
+    setor = db.query(Setor).filter(Setor.id == sector_id, Setor.organization_id == user.organization_id).first()
+    if not setor:
+        raise HTTPException(status_code=404, detail="Setor não encontrado.")
+    setor.nome = data.nome.strip()
+    if data.senha_tecnico:
+        if len(data.senha_tecnico) < 4:
+            raise HTTPException(status_code=400, detail="A senha genérica deve ter ao menos 4 caracteres.")
+        setor.senha_tecnico_hash = hash_password(data.senha_tecnico)
+    db.commit()
+    db.refresh(setor)
+    return SetorResponse(id=str(setor.id), nome=setor.nome, organization_id=str(setor.organization_id), ativo=setor.ativo)
+
+
+@api_router.delete("/sectors/{sector_id}")
+async def delete_setor(
+    sector_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Desativa um setor (soft delete). Apenas ADMIN."""
+    if user.role not in (UserRole.ADMIN, UserRole.SUPERUSUARIO):
+        raise HTTPException(status_code=403, detail="Apenas administradores podem remover setores.")
+    setor = db.query(Setor).filter(Setor.id == sector_id, Setor.organization_id == user.organization_id).first()
+    if not setor:
+        raise HTTPException(status_code=404, detail="Setor não encontrado.")
+    setor.ativo = False
+    db.commit()
+    return {"message": "Setor desativado."}
+
+
 # ========== EQUIPAMENTOS ENDPOINTS ==========
 @api_router.get("/equipamentos", response_model=List[EquipamentoResponse])
 async def list_equipamentos(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -2189,24 +2409,39 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
     if not equipamento:
         raise HTTPException(status_code=404, detail="Equipamento não encontrado")
 
-    # ── Spec 3.2.1: bloqueio por grupo de falha ─────────────────────────────
-    # O operador não pode abrir nova OS do mesmo grupo quando já existe uma em aberto.
-    grupo_alvo = data.grupo_id or str(equipamento.grupo_id) if equipamento.grupo_id else None
-    if grupo_alvo and user.role in (UserRole.OPERADOR, UserRole.TECNICO):
-        os_aberta_mesmo_grupo = db.query(OrdemServico).filter(
+    # ── FASE 3.1: Bloqueio por failure_group ────────────────────────────────
+    _TODOS_GRUPOS_FALHA = ["eletrico", "hidraulico", "mecanico", "pneumatico", "instrumentacao", "estrutural", "outro"]
+    _STATUSES_ABERTOS = [StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA, StatusOS.AGUARDANDO_REVISAO]
+
+    if data.failure_group:
+        os_bloqueante = db.query(OrdemServico).filter(
             OrdemServico.organization_id == user.organization_id,
             OrdemServico.equipamento_id == data.equipamento_id,
-            OrdemServico.grupo_id == grupo_alvo,
-            OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA]),
+            OrdemServico.failure_group == data.failure_group,
+            OrdemServico.status.in_(_STATUSES_ABERTOS),
         ).first()
-        if os_aberta_mesmo_grupo:
+        if os_bloqueante:
+            grupos_ocupados_rows = db.query(OrdemServico.failure_group).filter(
+                OrdemServico.organization_id == user.organization_id,
+                OrdemServico.equipamento_id == data.equipamento_id,
+                OrdemServico.failure_group != None,
+                OrdemServico.status.in_(_STATUSES_ABERTOS),
+            ).distinct().all()
+            grupos_ocupados = {r[0] for r in grupos_ocupados_rows if r[0]}
+            grupos_disponiveis = [g for g in _TODOS_GRUPOS_FALHA if g not in grupos_ocupados]
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    f"Equipamento já possui OS #{os_aberta_mesmo_grupo.numero} em aberto "
-                    f"para o mesmo grupo de falha. Para reportar uma falha diferente, "
-                    f"selecione outro grupo."
-                ),
+                detail={
+                    "error": "bloqueio_grupo_falha",
+                    "message": f"Equipamento já possui OS aberta para o grupo '{data.failure_group}'. Só é possível abrir OS de outro grupo de falha.",
+                    "os_bloqueante": {
+                        "id": str(os_bloqueante.id),
+                        "numero": os_bloqueante.numero,
+                        "failure_group": os_bloqueante.failure_group,
+                        "status": os_bloqueante.status.value,
+                    },
+                    "grupos_disponiveis": grupos_disponiveis,
+                },
             )
 
     numero = get_next_os_number(db, str(user.organization_id))
@@ -2223,9 +2458,11 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
         falha_tipo=data.falha_tipo,
         falha_modo=data.falha_modo,
         falha_causa=data.falha_causa,
+        failure_group=data.failure_group,
         solicitante_id=user.id,
         organization_id=user.organization_id,
-        downtime_start=now,  # início da parada registrado na abertura
+        downtime_start=now,
+        technician_employee_id=user.employee_id if user.role == UserRole.TECNICO else None,
     )
 
     # Check reincidência
@@ -2364,6 +2601,10 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
         if os.falha_causa != data.falha_causa:
             changes["falha_causa"] = {"de": os.falha_causa or "", "para": data.falha_causa}
         os.falha_causa = data.falha_causa
+    if data.failure_group is not None:
+        if os.failure_group != data.failure_group:
+            changes["failure_group"] = {"de": os.failure_group or "", "para": data.failure_group}
+        os.failure_group = data.failure_group
     if data.review_notes:
         os.review_notes = data.review_notes
         changes["review_notes"] = data.review_notes
@@ -2520,6 +2761,73 @@ async def add_ocorrencia(
 
     db.refresh(os_obj)
     return build_os_response(os_obj, db, user=user)
+
+
+@api_router.patch("/ordens-servico/{os_id}/ocorrencia")
+async def patch_ocorrencia(
+    os_id: str,
+    data: OcorrenciaCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    FASE 3.2 — Operador adiciona ocorrência a uma OS.
+    Não altera status nem downtime_start. Append-only no array JSON.
+    Notifica o técnico atribuído.
+    """
+    import json as _json
+
+    if user.role not in (UserRole.OPERADOR, UserRole.TECNICO, UserRole.LIDER, UserRole.ADMIN, UserRole.SUPERUSUARIO):
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+    if os_obj.status == StatusOS.FECHADA:
+        raise HTTPException(status_code=400, detail="Não é possível adicionar ocorrências a uma OS fechada.")
+
+    now = datetime.now(timezone.utc)
+    nova = {
+        "timestamp": now.isoformat(),
+        "operador_id": str(user.id),
+        "operador_nome": user.nome,
+        "descricao": data.descricao.strip(),
+    }
+
+    try:
+        lista = _json.loads(os_obj.occurrences) if os_obj.occurrences else []
+    except Exception:
+        lista = []
+
+    lista.append(nova)
+    os_obj.occurrences = _json.dumps(lista, ensure_ascii=False)
+    db.commit()
+
+    if os_obj.tecnico_id:
+        criar_notificacao(
+            db,
+            org_id=os_obj.organization_id,
+            destinatario_id=os_obj.tecnico_id,
+            tipo="nova_ocorrencia",
+            titulo=f"Nova ocorrência na OS #{os_obj.numero}",
+            mensagem=f"{user.nome}: {data.descricao[:100]}",
+            os_id=os_obj.id,
+        )
+
+    create_audit_log(
+        db, str(user.organization_id), str(user.id), "ordem_servico", str(os_obj.id),
+        "adicao_ocorrencia",
+        dados_novos=_json.dumps(nova, ensure_ascii=False),
+    )
+
+    return {
+        "id": str(os_obj.id),
+        "occurrences": lista,
+        "updated_at": now.isoformat(),
+    }
 
 
 # ========== CUSTOS ENDPOINTS ==========
@@ -2861,6 +3169,333 @@ async def get_backlog(user: User = Depends(get_current_user), db: Session = Depe
         "atrasadas": atrasadas,
         "total_pendentes": abertas + em_atendimento + aguardando_peca + aguardando_revisao
     }
+
+@api_router.get("/dashboard/operador")
+async def get_dashboard_operador(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    FASE 4.1 — KPIs do setor para OPERADOR e TECNICO.
+    Escopo: equipamentos do setor do usuário logado.
+    """
+    from sqlalchemy import func as _func, text as _sa_text
+
+    if user.role not in (UserRole.OPERADOR, UserRole.TECNICO):
+        raise HTTPException(status_code=403, detail="Acesso restrito a operadores e técnicos.")
+
+    setor_nome = user.setor or (user.generic_session_sector if user.role == UserRole.TECNICO else None)
+    if not setor_nome:
+        raise HTTPException(status_code=400, detail="Usuário sem setor definido. Configure o setor no perfil.")
+
+    # Resolve setor entity (opcional — pode não existir)
+    setor_entity = db.query(Setor).filter(
+        Setor.organization_id == user.organization_id,
+        Setor.nome == setor_nome,
+        Setor.ativo == True,
+    ).first()
+    setor_id = str(setor_entity.id) if setor_entity else None
+
+    now = datetime.now(timezone.utc)
+    first_day_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # IDs de equipamentos do setor
+    equip_ids_rows = db.execute(
+        _sa_text("SELECT id FROM equipamentos WHERE organization_id = :org AND setor = :setor AND ativo = TRUE"),
+        {"org": str(user.organization_id), "setor": setor_nome},
+    ).fetchall()
+    equip_ids = [r[0] for r in equip_ids_rows]
+
+    def _os_q():
+        q = db.query(OrdemServico).filter(OrdemServico.organization_id == user.organization_id)
+        if equip_ids:
+            q = q.filter(OrdemServico.equipamento_id.in_(equip_ids))
+        else:
+            q = q.filter(False)  # setor sem equipamentos → vazio
+        return q
+
+    # OS do mês
+    os_mes = _os_q().filter(OrdemServico.created_at >= first_day_month).count()
+
+    # MTTR (minutos)
+    os_com_reparo = _os_q().filter(OrdemServico.tempo_reparo != None).all()
+    mttr_min = (sum(o.tempo_reparo for o in os_com_reparo) / len(os_com_reparo)) if os_com_reparo else 0.0
+
+    # MTBF (horas)
+    total_corretivas = _os_q().filter(OrdemServico.tipo == TipoOS.CORRETIVA).count()
+    first_os = _os_q().filter(OrdemServico.tipo == TipoOS.CORRETIVA).order_by(OrdemServico.created_at).first()
+    if first_os and total_corretivas > 1:
+        days = (now - first_os.created_at).days or 1
+        mtbf_h = (days * 24) / total_corretivas
+    else:
+        mtbf_h = 720.0
+
+    # Disponibilidade
+    mttr_h = mttr_min / 60
+    disponibilidade = (mtbf_h / (mtbf_h + mttr_h) * 100) if (mtbf_h + mttr_h) > 0 else 100.0
+
+    # Tempo de resposta médio
+    os_com_resp = _os_q().filter(OrdemServico.tempo_resposta != None).all()
+    tempo_resposta_medio = (sum(o.tempo_resposta for o in os_com_resp) / len(os_com_resp)) if os_com_resp else 0.0
+
+    # OS abertas do setor
+    _ABERTOS = [StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA]
+    os_abertas_objs = _os_q().filter(OrdemServico.status.in_(_ABERTOS)).all()
+    os_abertas = [
+        {
+            "id": str(o.id), "numero": o.numero, "status": o.status.value,
+            "prioridade": o.prioridade.value, "failure_group": o.failure_group,
+            "descricao": o.descricao[:120], "created_at": o.created_at.isoformat(),
+        }
+        for o in os_abertas_objs
+    ]
+
+    # Equipamentos em manutenção
+    equip_em_manutencao_ids = list({str(o.equipamento_id) for o in os_abertas_objs})
+    equipamentos_em_manutencao = []
+    for eid in equip_em_manutencao_ids:
+        eq = db.query(Equipamento).filter(Equipamento.id == eid).first()
+        if eq:
+            equipamentos_em_manutencao.append({"id": str(eq.id), "codigo": eq.codigo, "nome": eq.nome})
+
+    return {
+        "setor_id": setor_id,
+        "setor_nome": setor_nome,
+        "disponibilidade_percent": round(disponibilidade, 1),
+        "mttr_minutos": round(mttr_min, 1),
+        "mtbf_horas": round(mtbf_h, 1),
+        "os_mes": os_mes,
+        "tempo_resposta_medio_min": round(tempo_resposta_medio, 1),
+        "os_abertas": os_abertas,
+        "equipamentos_em_manutencao": equipamentos_em_manutencao,
+    }
+
+
+@api_router.get("/dashboard/lider")
+async def get_dashboard_lider(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    FASE 4.2 — KPIs completos + financeiros para LIDER, ADMIN e SUPERUSUARIO.
+    LIDER: escopo do seu setor. ADMIN/SUPERUSUARIO: toda a organização.
+    """
+    from sqlalchemy import func as _func
+
+    if user.role not in (UserRole.LIDER, UserRole.ADMIN, UserRole.SUPERUSUARIO):
+        raise HTTPException(status_code=403, detail="Acesso restrito a líderes e administradores.")
+
+    now = datetime.now(timezone.utc)
+    first_day_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # Escopo: LIDER filtra pelo setor; ADMIN/SUPER vê tudo
+    equip_ids = None
+    setor_nome = None
+    setor_id = None
+    if user.role == UserRole.LIDER and user.setor:
+        setor_nome = user.setor
+        from sqlalchemy import text as _sa_text
+        rows = db.execute(
+            _sa_text("SELECT id FROM equipamentos WHERE organization_id = :org AND setor = :setor AND ativo = TRUE"),
+            {"org": str(user.organization_id), "setor": setor_nome},
+        ).fetchall()
+        equip_ids = [r[0] for r in rows]
+        setor_entity = db.query(Setor).filter(
+            Setor.organization_id == user.organization_id, Setor.nome == setor_nome, Setor.ativo == True
+        ).first()
+        setor_id = str(setor_entity.id) if setor_entity else None
+
+    def _os_q():
+        q = db.query(OrdemServico).filter(OrdemServico.organization_id == user.organization_id)
+        if equip_ids is not None:
+            q = q.filter(OrdemServico.equipamento_id.in_(equip_ids)) if equip_ids else q.filter(False)
+        return q
+
+    # OS do mês
+    os_mes = _os_q().filter(OrdemServico.created_at >= first_day_month).count()
+
+    # MTTR
+    os_com_reparo = _os_q().filter(OrdemServico.tempo_reparo != None).all()
+    mttr_min = (sum(o.tempo_reparo for o in os_com_reparo) / len(os_com_reparo)) if os_com_reparo else 0.0
+
+    # MTBF
+    total_corretivas = _os_q().filter(OrdemServico.tipo == TipoOS.CORRETIVA).count()
+    first_os = _os_q().filter(OrdemServico.tipo == TipoOS.CORRETIVA).order_by(OrdemServico.created_at).first()
+    if first_os and total_corretivas > 1:
+        days = (now - first_os.created_at).days or 1
+        mtbf_h = (days * 24) / total_corretivas
+    else:
+        mtbf_h = 720.0
+    mttr_h = mttr_min / 60
+    disponibilidade = (mtbf_h / (mtbf_h + mttr_h) * 100) if (mtbf_h + mttr_h) > 0 else 100.0
+
+    # Tempo de resposta médio
+    os_com_resp = _os_q().filter(OrdemServico.tempo_resposta != None).all()
+    tempo_resposta_medio = (sum(o.tempo_resposta for o in os_com_resp) / len(os_com_resp)) if os_com_resp else 0.0
+
+    # Custo total de parada do mês
+    os_mes_objs = _os_q().filter(OrdemServico.created_at >= first_day_month, OrdemServico.tempo_total != None).all()
+    custo_parada_mes = 0.0
+    custo_por_equip: dict = {}
+    for o in os_mes_objs:
+        eq = db.query(Equipamento).filter(Equipamento.id == o.equipamento_id).first()
+        if eq and eq.valor_hora:
+            c = (o.tempo_total / 60) * eq.valor_hora
+            custo_parada_mes += c
+            eid = str(eq.id)
+            custo_por_equip[eid] = custo_por_equip.get(eid, {"nome": eq.nome, "codigo": eq.codigo, "custo": 0.0})
+            custo_por_equip[eid]["custo"] += c
+
+    top_equipamentos_custo = sorted(custo_por_equip.values(), key=lambda x: x["custo"], reverse=True)[:5]
+    for t in top_equipamentos_custo:
+        t["custo"] = round(t["custo"], 2)
+
+    # OS por grupo de falha
+    grupos_falha_rows = _os_q().filter(
+        OrdemServico.failure_group != None,
+        OrdemServico.created_at >= first_day_month,
+    ).all()
+    os_por_grupo_falha: dict = {}
+    for o in grupos_falha_rows:
+        g = o.failure_group or "outro"
+        os_por_grupo_falha[g] = os_por_grupo_falha.get(g, 0) + 1
+
+    # Técnicos ativos agora
+    _ABERTOS = [StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA]
+    tecnico_ids_ativos = list({str(o.tecnico_id) for o in _os_q().filter(
+        OrdemServico.status == StatusOS.EM_ATENDIMENTO,
+        OrdemServico.tecnico_id != None,
+    ).all()})
+    tecnicos_ativos = []
+    for tid in tecnico_ids_ativos:
+        t = db.query(User).filter(User.id == tid).first()
+        if t:
+            tecnicos_ativos.append({"id": str(t.id), "nome": t.nome, "employee_id": t.employee_id})
+
+    # Pendentes de revisão
+    pendentes_revisao = _os_q().filter(OrdemServico.status == StatusOS.AGUARDANDO_REVISAO).count()
+
+    # OS abertas (resumo)
+    os_abertas_objs = _os_q().filter(OrdemServico.status.in_(_ABERTOS)).all()
+    os_abertas = [
+        {
+            "id": str(o.id), "numero": o.numero, "status": o.status.value,
+            "prioridade": o.prioridade.value, "failure_group": o.failure_group,
+            "descricao": o.descricao[:120], "created_at": o.created_at.isoformat(),
+        }
+        for o in os_abertas_objs
+    ]
+
+    # Equipamentos em manutenção
+    equip_em_manutencao_ids = list({str(o.equipamento_id) for o in os_abertas_objs})
+    equipamentos_em_manutencao = []
+    for eid in equip_em_manutencao_ids:
+        eq = db.query(Equipamento).filter(Equipamento.id == eid).first()
+        if eq:
+            equipamentos_em_manutencao.append({"id": str(eq.id), "codigo": eq.codigo, "nome": eq.nome})
+
+    return {
+        "setor_id": setor_id,
+        "setor_nome": setor_nome,
+        "disponibilidade_percent": round(disponibilidade, 1),
+        "mttr_minutos": round(mttr_min, 1),
+        "mtbf_horas": round(mtbf_h, 1),
+        "os_mes": os_mes,
+        "tempo_resposta_medio_min": round(tempo_resposta_medio, 1),
+        "custo_total_parada_mes": round(custo_parada_mes, 2),
+        "top_equipamentos_custo": top_equipamentos_custo,
+        "os_por_grupo_falha": os_por_grupo_falha,
+        "tecnicos_ativos": tecnicos_ativos,
+        "pendentes_revisao": pendentes_revisao,
+        "os_abertas": os_abertas,
+        "equipamentos_em_manutencao": equipamentos_em_manutencao,
+    }
+
+
+@api_router.get("/dashboard/superusuario")
+async def get_dashboard_superusuario(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    FASE 4.3 — Visão consolidada de todas as empresas. Apenas SUPERUSUARIO.
+    """
+    if user.role != UserRole.SUPERUSUARIO:
+        raise HTTPException(status_code=403, detail="Acesso exclusivo para superusuários.")
+
+    orgs = db.query(Organization).filter(Organization.ativo == True).all()
+
+    empresas = []
+    total_os_abertas = 0
+    alertas_criticos = 0
+
+    for org in orgs:
+        usuarios_ativos = db.query(User).filter(
+            User.organization_id == org.id, User.ativo == True
+        ).count()
+
+        os_abertas_count = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == org.id,
+            OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA]),
+        ).count()
+
+        total_os_abertas += os_abertas_count
+
+        # Criticas abertas
+        criticas = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == org.id,
+            OrdemServico.prioridade == PrioridadeOS.CRITICA,
+            OrdemServico.status.in_([StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA]),
+        ).count()
+        if criticas > 0:
+            alertas_criticos += 1
+
+        # Disponibilidade média simples
+        os_com_reparo = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == org.id,
+            OrdemServico.tempo_reparo != None,
+        ).all()
+        mttr_h_org = (sum(o.tempo_reparo for o in os_com_reparo) / len(os_com_reparo) / 60) if os_com_reparo else 0
+        total_corr = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == org.id, OrdemServico.tipo == TipoOS.CORRETIVA
+        ).count()
+        first_corr = db.query(OrdemServico).filter(
+            OrdemServico.organization_id == org.id, OrdemServico.tipo == TipoOS.CORRETIVA
+        ).order_by(OrdemServico.created_at).first()
+        if first_corr and total_corr > 1:
+            days = (datetime.now(timezone.utc) - first_corr.created_at).days or 1
+            mtbf_h_org = (days * 24) / total_corr
+        else:
+            mtbf_h_org = 720.0
+        disponibilidade_org = (
+            (mtbf_h_org / (mtbf_h_org + mttr_h_org) * 100) if (mtbf_h_org + mttr_h_org) > 0 else 100.0
+        )
+
+        # Último acesso
+        ultimo_acesso_user = db.query(User).filter(
+            User.organization_id == org.id, User.ativo == True, User.updated_at != None
+        ).order_by(User.updated_at.desc()).first()
+
+        empresas.append({
+            "id": str(org.id),
+            "nome": org.nome,
+            "plano": org.plano.value,
+            "usuarios_ativos": usuarios_ativos,
+            "os_abertas": os_abertas_count,
+            "disponibilidade_media": round(disponibilidade_org, 1),
+            "ultimo_acesso": ultimo_acesso_user.updated_at.isoformat() if ultimo_acesso_user and ultimo_acesso_user.updated_at else None,
+            "status_contrato": org.subscription_status or "ativo",
+        })
+
+    return {
+        "empresas": empresas,
+        "totais": {
+            "empresas_ativas": len(orgs),
+            "os_abertas_total": total_os_abertas,
+            "alertas_criticos": alertas_criticos,
+        },
+    }
+
 
 @api_router.get("/equipamentos/{equipamento_id}/historico")
 async def get_equipamento_historico(equipamento_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -4484,16 +5119,18 @@ async def get_kanban(
             "equipamento": equip.nome if equip else "—",
             "equipamento_codigo": equip.codigo if equip else None,
             "equipamento_localizacao": equip.localizacao if equip else None,
-            # Grupo de falha
+            # Grupo de equipamento (classificação) e grupo de falha (novo)
             "grupo_id": str(o.grupo_id) if o.grupo_id else None,
             "grupo_nome": grupo_map.get(str(o.grupo_id)) if o.grupo_id else None,
+            "failure_group": getattr(o, "failure_group", None),
             # Tipo e prioridade
             "tipo": o.tipo.value,
             "prioridade": o.prioridade.value,
             # Pessoas
             "solicitante": solicitante_obj.nome if solicitante_obj else None,
+            "solicitante_role": solicitante_obj.role.value if solicitante_obj else None,
             "tecnico": tecnico_obj.nome if tecnico_obj else None,
-            "tecnico_employee_id": tecnico_obj.employee_id if tecnico_obj else None,
+            "tecnico_employee_id": getattr(o, "technician_employee_id", None) or (tecnico_obj.employee_id if tecnico_obj else None),
             # Descricao
             "descricao": (o.descricao or "")[:100],
             # Timestamps

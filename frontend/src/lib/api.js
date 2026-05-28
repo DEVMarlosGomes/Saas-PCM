@@ -87,12 +87,26 @@ api.interceptors.response.use(
 export const getDashboardKPIs = () => api.get('/dashboard/kpis');
 export const getBacklog = () => api.get('/dashboard/backlog');
 export const getDashboardTendencia = (dias = 30) => api.get('/dashboard/tendencia', { params: { dias } });
+export const getDashboardOperador = () => api.get('/dashboard/operador');
+export const getDashboardLider = () => api.get('/dashboard/lider');
+export const getDashboardSuperusuario = () => api.get('/dashboard/superusuario');
 
 // ─── Kanban ───────────────────────────────────────────────
 export const getKanban = () => api.get('/kanban');
 
 // ─── OS Ocorrências ───────────────────────────────────────
 export const addOcorrenciaOS = (id, descricao) => api.post(`/ordens-servico/${id}/ocorrencias`, { descricao });
+export const patchOcorrencia = (id, descricao) => api.patch(`/ordens-servico/${id}/ocorrencia`, { descricao });
+
+// ─── Setores ─────────────────────────────────────────────
+export const getSetores = () => api.get('/sectors');
+export const getSetoresTecnico = (tenant_id) => api.get('/sectors/tecnico-options', { params: { tenant_id } });
+export const createSetor = (data) => api.post('/sectors', data);
+export const updateSetor = (id, data) => api.put(`/sectors/${id}`, data);
+export const deleteSetor = (id) => api.delete(`/sectors/${id}`);
+
+// ─── Auth técnico (sem autenticação prévia) ───────────────
+export const tecnicoLoginApi = (data) => api.post('/auth/tecnico-login', data);
 
 // ─── Equipamentos ─────────────────────────────────────────
 export const getEquipamentos = () => api.get('/equipamentos');
