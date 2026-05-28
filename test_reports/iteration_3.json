@@ -1,0 +1,65 @@
+{
+  "summary": "Validação backend das 9 fases SaaS PCM (AURIX). 27 testes executados, 23 PASS / 4 FAIL. Todas as 4 falhas têm a MESMA causa raiz: o enum Postgres `statusos` não contém o valor `AGUARDANDO_PECA`, mas o código Python o utiliza em filtros `.in_([...])`. A migração `ALTER TYPE statusos ADD VALUE IF NOT EXISTS 'aguardando_peca' ...` falhou silenciosamente (Postgres não permite ADD VALUE dentro de transação + diferença de case). Estrutura, RBAC, dashboards e novos endpoints (Fases 1–4) estão CONFORMES ao prompt. Não há GAPS de implementação — apenas 1 bug crítico de dados.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/ordens-servico, GET /api/dashboard/kpis, PATCH /api/ordens-servico/{id}/ocorrencia",
+        "issue": "500 Internal Server Error. psycopg2.errors.InvalidTextRepresentation: invalid input value for enum statusos: \"AGUARDANDO_PECA\". O enum Postgres `statusos` não possui o valor AGUARDANDO_PECA, mas qualquer query que use StatusOS.AGUARDANDO_PECA em .in_() falha. Afeta criação de OS (failure_group block check usa esse filtro), PATCH ocorrencia, dashboard/kpis e qualquer endpoint que consulte OS por status.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "phases_validation": {
+    "fase_1_novos_campos_db": "OK — failure_group, occurrences, occurrences_count, response_time_min, downtime_start, technician_employee_id presentes em OSResponse. employee_id salvo/retornado em POST /api/users.",
+    "fase_2_login_tecnico": "OK — GET /api/sectors/tecnico-options (público, sem auth) retorna [{id, nome}]. POST /api/auth/tecnico-login retorna {token, user:{role,employee_id,sector_id,sector_name}}. Senha errada→401. Setor inexistente→404. NOTA: campo é `token` (não `access_token`) — está documentado como aceitável.",
+    "fase_3_1_bloqueio_failure_group": "BLOQUEADO POR BUG — não pôde ser validado em runtime devido ao bug do enum statusos. O código de bloqueio em server.py:2412-2440 está implementado corretamente (HTTP 409, body {error:bloqueio_grupo_falha, message, os_bloqueante, grupos_disponiveis}).",
+    "fase_3_2_patch_ocorrencia": "BLOQUEADO POR BUG — endpoint existe (PATCH /api/ordens-servico/{id}/ocorrencia em server.py:2766) mas não pôde ser testado pois POST de OS precursor falha.",
+    "fase_3_3_response_time_min": "BLOQUEADO POR BUG — mesmo motivo. response_time_min é exposto em OSResponse como alias de tempo_resposta (linha 1400).",
+    "fase_4_1_dashboard_operador": "OK — todos os 9 campos esperados presentes (setor_id, setor_nome, disponibilidade_percent, mttr_minutos, mtbf_horas, os_mes, tempo_resposta_medio_min, os_abertas[], equipamentos_em_manutencao[]). NÃO contém campos financeiros. Acesso: operador✓, tecnico✓, admin→403✓.",
+    "fase_4_2_dashboard_lider": "OK — campos financeiros presentes (custo_total_parada_mes, top_equipamentos_custo, os_por_grupo_falha, tecnicos_ativos, pendentes_revisao). Acesso: lider✓, operador→403✓.",
+    "fase_4_3_dashboard_superusuario": "OK — endpoint existe em server.py:3415. Retorna 403 para admin/lider (não é GAP, é proteção correta)."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pcm_phases.py",
+    "/app/test_reports/pytest/pcm_phases.xml"
+  ],
+  "rca_of_the_issue": {
+    "bug": "POST /ordens-servico e endpoints relacionados retornam 500.",
+    "root_cause": "O enum PostgreSQL `statusos` foi criado originalmente sem o valor `AGUARDANDO_PECA`. A migração em server.py:752 tenta `ALTER TYPE statusos ADD VALUE IF NOT EXISTS 'aguardando_peca' BEFORE 'aguardando_revisao'`, mas (1) PostgreSQL não permite ALTER TYPE ADD VALUE dentro de uma transação (o try/except engole o erro silenciosamente em server.py:758-761), e (2) o nome do valor em PG aparenta ser UPPERCASE (`ABERTA`, `EM_ATENDIMENTO`, etc.) pois SQLAlchemy SQLEnum usa Python enum NAMES por padrão — então a tentativa de adicionar 'aguardando_peca' (lowercase) também é inconsistente com o restante.",
+    "evidence": "Backend log: `psycopg2.errors.InvalidTextRepresentation: invalid input value for enum statusos: \"AGUARDANDO_PECA\"` com params `status_1_3: 'AGUARDANDO_PECA'` em filtros .in_([ABERTA, EM_ATENDIMENTO, AGUARDANDO_PECA, AGUARDANDO_REVISAO]).",
+    "reproduction": "POST /api/ordens-servico (auth operador) com {equipamento_id, descricao, failure_group:'eletrico'} → 500.",
+    "mitigation": "Executar fora de transação (autocommit) o seguinte SQL no Supabase (substituindo pela case correto do enum existente — verificar com `SELECT enumlabel FROM pg_enum WHERE enumtypid = 'statusos'::regtype`): `ALTER TYPE statusos ADD VALUE IF NOT EXISTS 'AGUARDANDO_PECA' BEFORE 'AGUARDANDO_REVISAO'`. Alternativa: configurar SQLAlchemy SQLEnum com `values_callable=lambda x: [e.value for e in x]` para forçar uso de valores lowercase e migrar o tipo no DB, ou no migration code abrir uma conexão com `isolation_level='AUTOCOMMIT'` antes do ALTER TYPE."
+  },
+  "action_items": [
+    "CRÍTICO: Corrigir o enum `statusos` no Postgres adicionando o valor AGUARDANDO_PECA (verificar case com `SELECT enumlabel FROM pg_enum WHERE enumtypid='statusos'::regtype` no Supabase). A migração in-code não funciona porque ALTER TYPE ADD VALUE não pode rodar em transação — usar conexão com isolation_level='AUTOCOMMIT'.",
+    "Após o fix, re-rodar /app/backend/tests/test_pcm_phases.py para validar as fases 3.1, 3.2 e 3.3 que estão bloqueadas pelo mesmo bug.",
+    "Considerar padronizar SQLEnum com values_callable para evitar discrepância de case entre Python enum NAMES e Postgres enum labels."
+  ],
+  "critical_code_review_comments": [
+    "server.py:754-761 — o try/except do bloco de migrations engole TODAS as exceções silenciosamente, mascarando falhas como esta. Considerar logar warnings explícitos por SQL falho.",
+    "server.py é um arquivo monolítico de 5781 linhas — viola a recomendação de <700 linhas/módulo. Deveria ser dividido em /app/backend/app/routers/, /models/, /schemas/, /services/ (a estrutura já existe vazia em /app/backend/app/).",
+    "server.py:37 — DB_PASSWORD tem default hardcoded ('@Mgfj125256') e DB_HOST/DB_USER têm defaults. Viola a regra de não hardcodar credenciais e fail-fast.",
+    "server.py:51 — JWT_SECRET com fallback secrets.token_hex(32) faz tokens invalidarem a cada restart e quebra autenticação multi-worker. Deveria FALHAR se JWT_SECRET ausente.",
+    "OS endpoints usam `status.in_([StatusOS.X, ...])` em vários lugares sem catch de DataError — qualquer enum desalinhado quebra todo o fluxo."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pcm_phases.py (criado)",
+    "/app/test_reports/iteration_3.json (criado)",
+    "/app/test_reports/pytest/pcm_phases.xml (criado)"
+  ],
+  "success_rate": {
+    "backend": "85% (23/27 — 4 falhas com mesma causa raiz)",
+    "frontend": "N/A (não solicitado)"
+  },
+  "test_credentials": "OK — todos os 4 usuários demo logam com sucesso (admin/lider/tecnico/operador).",
+  "seed_data_creation": "Testes criam usuário TEST_emp_* e equipamento TEST_* com employee_id temporário. Não há rotina de cleanup explícita — usar prefix 'TEST_' para identificação posterior.",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "Após o fix do enum statusos (adicionar AGUARDANDO_PECA), re-rodar `pytest /app/backend/tests/test_pcm_phases.py -v`. Os 4 testes que falharam (fase 3.1, 3.2, 3.3 e regression /dashboard/kpis) devem todos passar. O código de bloqueio failure_group, PATCH ocorrencia, response_time_min e dashboard kpis já estão implementados corretamente — só estão bloqueados pelo enum quebrado."
+}
