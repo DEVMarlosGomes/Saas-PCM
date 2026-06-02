@@ -911,13 +911,26 @@ def ensure_database_schema():
         ]
         try:
             from sqlalchemy import text as sa_text
+            # Standard migrations (DDL) — em transação normal
             with engine.connect() as conn:
                 for sql in _migrations:
+                    if sql.strip().upper().startswith("ALTER TYPE"):
+                        continue  # tratado abaixo em AUTOCOMMIT
                     try:
                         conn.execute(sa_text(sql))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Migration skipped: %s :: %s", sql[:80], e)
                 conn.commit()
+            # ALTER TYPE precisa rodar fora de transação no PostgreSQL
+            autocommit_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
+            with autocommit_engine.connect() as conn:
+                for sql in _migrations:
+                    if not sql.strip().upper().startswith("ALTER TYPE"):
+                        continue
+                    try:
+                        conn.execute(sa_text(sql))
+                    except Exception as e:
+                        logger.warning("ALTER TYPE skipped: %s :: %s", sql[:80], e)
         except Exception as mig_exc:
             logger.warning("Schema migrations skipped: %s", mig_exc)
         database_initialized = True
@@ -2757,6 +2770,7 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
     return build_os_response(os, db, user=user)
 
 @api_router.put("/ordens-servico/{os_id}", response_model=OSResponse)
+@api_router.patch("/ordens-servico/{os_id}", response_model=OSResponse)
 async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     os = db.query(OrdemServico).filter(
         OrdemServico.id == os_id,
@@ -5721,7 +5735,7 @@ async def get_kanban(
             # Timestamps
             "created_at": o.created_at.isoformat() if o.created_at else None,
             "inicio_atendimento": o.inicio_atendimento.isoformat() if o.inicio_atendimento else None,
-            "downtime_start": getattr(o, "downtime_start", o.created_at).isoformat() if getattr(o, "downtime_start", None) or o.created_at else None,
+            "downtime_start": ((getattr(o, "downtime_start", None) or o.created_at).isoformat() if (getattr(o, "downtime_start", None) or o.created_at) else None),
             # SLA
             "dentro_sla": o.dentro_sla,
             "tempo_resposta": o.tempo_resposta,

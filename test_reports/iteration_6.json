@@ -1,0 +1,50 @@
+{
+  "summary": "Re-validation of PCM AURIX fixes applied after iteration 5. BACKEND fixes CONFIRMED via curl: (1) GET /api/kanban returns 200 in 1.3s with 5 columns and 13 OS distributed exactly as expected (aberta=2, em_atendimento=7, aguardando_peca=0, aguardando_revisao=1, revisada=3) — no more 500. (2) PATCH /api/ordens-servico/{id} alias works (200). FRONTEND: Admin /kanban DOES render all 5 columns + 13 cards with colored failure_group badges (ELÉTRICA/PNEUMATICO/MECÂNICO/TI/AUTOMAÇÃO), 'Em manutenção: NhNmin' timers, solicitante, técnico, SLA tags ('No SLA', 'Fora do SLA'), and days-open counter. BUT a NEW critical environmental issue was discovered: GET /api/kanban via browser (axios+fetch through Cloudflare ingress) takes 25–46 SECONDS to complete the first request, while curl from the container takes 1.3s. After that long wait the page renders correctly. Operador dashboard duplicated H1 IS FIXED (only the AppLayout top-bar title remains, no in-page H1). Operador Kanban header still reads 'Visualização (somente leitura)' — this is the existing copy for drag-disabled, NOT a regression, but is misleading because operador's specific affordance is 'Adicionar ocorrência' per card, not drag. FASE 8 (Nova OS chips + BloqueioModal) NOT re-tested in this iteration because Kanban validation consumed the time budget; backend already validated. FASE 7 ocorrência add flow not exercised because operador's setor 'Produção' has zero OS to click on (seed needed).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/kanban (via Cloudflare ingress, browser)", "issue": "First request from the browser session takes 25–46s end-to-end vs 1.3s from container curl. Subsequent requests in same session are also slow. Suspect cloudflare/ingress edge caching/buffering of a streaming-ish response, OR a connection-keepalive issue. Same token & headers; backend logs show no error. This makes the UI feel broken under preview environment. NOT a code bug but blocks UX validation in headless tests."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "KanbanPage header (operador role)", "issue": "Header subtitle says 'Visualização (somente leitura)' for operador. This is technically correct for drag-disabled but is the SAME copy from iteration 5; the spec implies operador should NOT feel read-only because they have 'Adicionar ocorrência' per card. Suggest changing copy to '· Clique em um card para adicionar ocorrência' when user.role === 'operador'.", "selector": "KanbanPage.jsx:711", "priority": "MEDIUM"},
+      {"component": "KanbanPage title (all roles)", "issue": "Page still has an in-content <h1>Kanban de OS</h1> at line 708 of KanbanPage.jsx — the AppLayout top-bar already shows 'Kanban de OS'. So 'Kanban de OS' is visually duplicated on this page. The iteration-5 fix was applied only to DashboardOperadorPage and DashboardLiderPage; the same de-duplication should be considered for KanbanPage and other inner pages for consistency.", "selector": "h1:has-text('Kanban de OS')", "priority": "LOW"},
+      {"component": "Whole app", "issue": "data-testid coverage is still mostly missing. KanbanPage has data-testid='kanban-page' on the root div, but per-card testids (kanban-card-{id}, kanban-card-failure-group-{group}, kanban-card-add-ocorrencia-btn) and BloqueioModal/Nova-OS chip testids requested by spec are absent. Could not assert via testid selectors.", "selector": "[data-testid^='kanban-card']", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Admin → /kanban load", "issue": "Page renders correctly BUT only after a 25–46s delay on first request (browser through Cloudflare). curl-direct is 1.3s. Likely infrastructure (ingress buffering / response body proxying). Inspect cloudflare/k8s ingress for /api/kanban; possibly a chunked response not flushing or a CF Browser-Integrity check. Headless playwright always shows the lag; an end-user using normal Chrome may see same.", "affected_selectors": ["[data-testid='kanban-page']"]},
+      {"flow": "Operador → Adicionar ocorrência", "issue": "Could not exercise because operador's setor 'Produção' has 0 OS — all seed OS belong to Setor A/B/Logística/Utilidades/TEST. Recommend seeding at least 2 OS with setor='Produção' so operador can see cards and click 'Adicionar ocorrência'. Code path (handleOccurrence/setOccurrenceModal/patchOcorrencia) exists in KanbanPage.jsx:615-629 but was not visually validated.", "affected_selectors": ["button:has-text('Adicionar ocorrência')"]},
+      {"flow": "FASE 8 — Nova OS form failure_group chips + BloqueioModal", "issue": "NOT re-tested in this iteration. Backend route exists; UI requires manual exercise. Recommend dedicated retest after seed.", "affected_selectors": ["[data-testid^='fg-chip-']", "[data-testid='bloqueio-modal']"]}
+    ],
+    "design_issues": [
+      {"screen": "DashboardOperadorPage", "issues": ["FIX CONFIRMED: in-page H1 'Dashboard do Operador' was removed. Only the AppLayout top-bar shows it. 5 KPI cards (Disponibilidade/MTTR/MTBF/OS Mês/T.Resposta) render correctly with no financial card (as spec requires). 'OS Abertas do Setor' & 'Equipamentos em Manutenção' panels render."]},
+      {"screen": "KanbanPage (admin)", "issues": ["Cards render with strong industrial dark style: numero (#14), failure_group chip in colored pill (ELÉTRICA blue, PNEUMATICO teal, MECÂNICO purple, TI/AUTOMAÇÃO another color), priority pill (Baixa/Média), 'Em manutenção: 1642h6min' bar (red), 'Aguardando 1642h6min [SLA: 2h]' bar, solicitante (Operador Produção), técnico (Técnico Manutenção #T001), days-open badge (68d/56d). Visually matches spec.", "Header still shows duplicated 'Kanban de OS' (top-bar + h1) — same pattern that was fixed in dashboards."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_pcm_phases.py"],
+  "action_items": [
+    "[INFRA-CRITICAL] Investigate why GET /api/kanban from browser-through-Cloudflare takes 25-46s while curl-direct is 1.3s. Suspect: response chunk buffering at ingress, or CF Browser-Integrity-Check. Check k8s ingress annotations for proxy-buffering, and CF dashboard for any bot-fight challenge on this route. UX is broken in preview without this fix.",
+    "[MEDIUM] Change KanbanPage subtitle for operador from 'Visualização (somente leitura)' to e.g. '· Clique em um card para adicionar ocorrência' so the role affordance is clear.",
+    "[LOW] Remove the duplicated <h1>Kanban de OS</h1> from KanbanPage.jsx:708 (AppLayout top-bar already provides it), same way DashboardOperador/Lider were de-duplicated.",
+    "[HIGH] Add data-testid attributes to per-card elements (kanban-card-{os_id}, kanban-card-failure-group-{group}, kanban-card-add-ocorrencia-btn), Nova-OS chips (fg-chip-{group}), BloqueioModal (bloqueio-modal, bloqueio-modal-chip-{group}) — spec explicitly requires kebab-case testids and they're still missing.",
+    "[MEDIUM] Seed at least 2 OS with setor='Produção' so operador@demo.pcm sees cards and FASE 7 'Adicionar ocorrência' can be exercised end-to-end."
+  ],
+  "critical_code_review_comments": [
+    "KanbanPage.jsx still has h1 title duplicating the AppLayout header — inconsistent with the iteration-5 fix on dashboards.",
+    "KanbanPage.jsx:711 conditional copy 'Visualização (somente leitura)' is misleading for operador role; should communicate the alternative affordance.",
+    "Frontend axios instance (lib/api.js) has NO request timeout. Combined with the 25-46s ingress lag this means the spinner can hang up to a minute with no fallback. Add e.g. timeout: 20000 and a toast on timeout to fail fast.",
+    "FE testid coverage still does not meet spec (kebab-case per element) — flagged for 2 iterations in a row."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (curl direct: /api/kanban 200, /api/ordens-servico/{id} PATCH 200, distribution matches)",
+    "frontend": "~70% (FASE 6 dashboard de-duplication CONFIRMED ✅; FASE 7 admin kanban renders ✅ but slow; FASE 7 operador ocorrência NOT visually validated due to empty setor; FASE 8 not re-tested)"
+  },
+  "test_credentials": "Used credentials from /app/memory/test_credentials.md — all valid.",
+  "seed_data_creation": "Did not create new seed data. Strongly recommend seeding 2 OS with setor='Produção' so operador@demo.pcm sees cards.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend is 100% functional (curl verified). Main pending blockers are: (a) the 25-46s browser-through-Cloudflare lag on /api/kanban — investigate ingress/CF, not code; (b) operador setor 'Produção' has no OS, so FASE 7 Adicionar-ocorrência button cannot be visually validated until 2+ OS are seeded under that setor; (c) FASE 8 BloqueioModal + Nova-OS chips were not re-tested this iteration. Once seed + lag fix are in place, retest: operador kanban shows cards with 'Adicionar ocorrência' button; operador can submit ocorrência and counter increments; admin kanban does NOT show the button on the same cards (role-gating).",
+  "rca of the issue": "The previous iteration-5 'Kanban 500' was indeed fixed (server.py:5153 getattr+isoformat guard) — curl confirms 200 OK with valid payload. However a SEPARATE issue surfaces only via the browser: GET /api/kanban through the preview Cloudflare ingress takes 25-46 seconds while the same response from curl-on-host is 1.3s. This is an INFRASTRUCTURE / proxy issue (likely CF buffering or k8s ingress proxy-buffering with a large-ish JSON body), not a code regression. The earlier iteration-5 report of '500' is now correctly classified as TWO problems: the 500 (FIXED) and the slow response (still unresolved at the ingress layer)."
+}
