@@ -453,29 +453,287 @@ frontend:
         agent: "main"
         comment: "Dashboard nav item split: admin→/dashboard, lider→/dashboard/lider, tecnico+operador→/dashboard/operador. getPageTitle map updated."
 
+  - task: "PUT /equipamentos/{id} — permissão admin/gerente_industrial/supervisor_manutencao + audit trail diff"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt2: permissão atualizada para admin/gerente_industrial/supervisor_manutencao. Audit trail com diff de campos (antes/depois)."
+
+  - task: "DELETE /equipamentos/{id} — admin-only, 409 se OS ativa, soft delete"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt2: permissão admin-only. Retorna 409 se OS com status != FECHADA existe. Soft delete (ativo=False)."
+
+  - task: "POST /ordens-servico — 403 para GRUPO_PRODUCAO tentando criar preventiva/preditiva"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt3: valida tipo_os para GRUPO_PRODUCAO_ROLES. Retorna 403 com error=tipo_os_nao_permitido."
+
+  - task: "GET /users/buscar-por-cracha — lookup por employee_id"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt4: endpoint público-autenticado. Retorna {encontrado, nome_completo, role, setor}."
+
+  - task: "POST /ordens-servico — salva solicitante_cracha/nome/user_id"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt4: resolve crachá via employee_id. Salva solicitante_nome (resolvido ou livre) e solicitante_user_id."
+
+  - task: "GET /ordens-servico/{id}/equipe + POST + DELETE — equipe preventiva/preditiva"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt5: tabela os_equipe. 3 endpoints. POST resolve crachá. DELETE permite quem adicionou ou supervisor+."
+
+  - task: "GET /ordens-servico/{id}/historico — timeline de etapas"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt6: tabela os_historico. Grava em create_os e update_os (mudanças de status). Endpoint retorna lista ordenada por timestamp ASC."
+
+  - task: "PUT /ordens-servico/{id} — 422 se relatório ausente ao concluir (AGUARDANDO_REVISAO)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt7: valida relatorio_o_que_foi_realizado e relatorio_analise_problema antes de aceitar transição para AGUARDANDO_REVISAO. Salva relatório + preenchido_em + preenchido_por."
+
+  - task: "Cálculo automático de custo_mao_obra ao concluir OS"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt9: horas = (fim - inicio_atendimento); valor_hora = tecnico.valor_hora; custo_mao_obra = horas * valor_hora. Soma membros da equipe se preventiva/preditiva."
+
+  - task: "DELETE /custos/{id} — remoção individual de itens"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt8: hard delete do custo. Permite quem criou, técnico atribuído, ou supervisor_manutencao+."
+
+  - task: "PATCH /ordens-servico/{id}/custo-mao-obra — ajuste manual"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt9: permite supervisor_manutencao/analista/gerente/admin corrigir horas_trabalhadas e valor_hora_tecnico manualmente."
+
+  - task: "GET /relatorios/custos — campos CAPEX/OPEX + breakdown completo"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt10: adicionado custos_periodo com custo_materiais_total, custo_mao_obra_total, custo_parada_total, breakdown_por_tipo_os, breakdown_por_equipamento (top5), classificacao_capex_opex (OPEX=corretivas, CAPEX=prev+pred), por_mes. Campos legados mantidos."
+
+frontend:
+  - task: "EquipamentosPage — menu de ações (Editar/Excluir) nos cards"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/EquipamentosPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt2: MoreVertical dropdown. Editar abre modal pré-preenchido (admin/gerente_industrial/supervisor_manutencao). Excluir abre confirmação (admin only). 409 exibe alerta de OS ativa."
+
+  - task: "OrdensServicoPage — botão Abrir OS só para GRUPO_PRODUCAO + admin"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt3: podeAbrirOS = admin || GRUPO_PRODUCAO.includes(role). tiposPermitidos = corretiva apenas para GRUPO_PRODUCAO."
+
+  - task: "OrdensServicoPage — seção Solicitante com lookup de crachá"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt4: SolicitanteSection com crachá+Buscar. Encontrado=verde. Não encontrado=input livre. solicitante_nome obrigatório para submit."
+
+  - task: "OrdensServicoPage — seção Equipe no detalhe (preventiva/preditiva)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt5: seção Equipe de execução no drawer. Modal Adicionar membro com crachá+especialidade. Ícone por especialidade."
+
+  - task: "OrdensServicoPage — timeline (Histórico da OS) no detalhe"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt6: componente OSTimeline com linha vertical e cor por etapa."
+
+  - task: "OrdensServicoPage — modal Relatório de Execução obrigatório ao concluir"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt7: handleStatusChange intercepta aguardando_revisao → abre modal. Validação mín 30 chars por campo."
+
+  - task: "OrdensServicoPage — delete de item de custo (botão Trash2 + confirmação)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt8: Trash2 ao hover em cada item. Modal de confirmação. Atualiza lista localmente."
+
+  - task: "OrdensServicoPage — breakdown financeiro completo no detalhe"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/OrdensServicoPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt9: seção Impacto Financeiro com materiais+mão de obra+parada+total. Visível apenas para admin+GRUPO_MANUTENCAO."
+
+  - task: "RelatoriosPage — painel Análise de Custos CAPEX/OPEX"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/RelatoriosPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Alt10: 4 KPI cards, stacked bar chart por mês, tabela CAPEX/OPEX, breakdown por tipo OS, top 5 equipamentos. Usa custos_periodo da API."
+
 agent_communication:
   - agent: "main"
     message: "Implemented all features: Stripe billing, plan limits, downtime cost calculation, review workflow, enhanced dashboard. Backend is running and all new tables/columns created. Test credentials in /app/memory/test_credentials.md"
   - agent: "testing"
     message: "✅ BACKEND TESTING COMPLETE - All 6 high-priority backend tasks tested and working perfectly. Fixed database schema issues (added missing billing and review workflow columns). Fixed route ordering for pending-reviews endpoint. All billing endpoints, plan limits, downtime costs, review workflow, enhanced KPIs, and audit trail are fully functional. Equipamento historico endpoint also includes custo_parada calculations. 9/9 backend tests passed."
   - agent: "main"
-    message: "FASE 1-9 implementadas: failure_group bloqueio, tecnico login, PATCH ocorrencia, response_time_min, dashboards por perfil (operador/lider), TecnicoLoginPage, DashboardOperadorPage, DashboardLiderPage, Kanban enriquecido, BloqueioModal, failure_group chips no formulário. backend_test.py atualizado com 6 novos testes. Backend não rodando localmente — execute com: cd backend && uvicorn server:app --port 8001, depois: python backend_test.py"
+    message: "FASE 1-9 implementadas: failure_group bloqueio, tecnico login, PATCH ocorrencia, response_time_min, dashboards por perfil (operador/lider), TecnicoLoginPage, DashboardOperadorPage, DashboardLiderPage, Kanban enriquecido, BloqueioModal, failure_group chips no formulário."
+  - agent: "main"
+    message: "ALTERAÇÕES 2-10 implementadas: roles GRUPO_PRODUCAO/MANUTENCAO, editar/excluir equipamentos, botão Abrir OS por grupo, lookup crachá solicitante, equipe preventiva/preditiva, timeline histórico OS, relatório técnico obrigatório, delete custo individual, custo mão de obra automático, painel CAPEX/OPEX relatórios. Novas tabelas: os_equipe, os_historico. Novos campos: solicitante_cracha/nome, relatorio_*, custo_mao_obra, horas_trabalhadas, valor_hora_tecnico (OS), criado_por (custo_os), valor_hora (users)."
 
 metadata:
   created_by: "main_agent"
-  version: "2.0"
-  test_sequence: 2
+  version: "3.0"
+  test_sequence: 3
   run_ui: false
 
 test_plan:
   current_focus:
-    - "failure_group bloqueio — POST /ordens-servico 409"
-    - "PATCH /ordens-servico/{id}/ocorrencia"
-    - "response_time_min calculation"
-    - "POST /auth/tecnico-login"
-    - "GET /dashboard/operador"
-    - "GET /dashboard/lider"
-    - "BloqueioModal + failure_group chips (frontend)"
+    - "PUT /equipamentos/{id} — permissão e audit trail"
+    - "DELETE /equipamentos/{id} — 409 com OS ativa"
+    - "POST /ordens-servico — 403 para GRUPO_PRODUCAO + preventiva"
+    - "GET /users/buscar-por-cracha"
+    - "PUT /ordens-servico/{id} — 422 sem relatório ao concluir"
+    - "Cálculo custo_mao_obra ao concluir OS"
+    - "DELETE /custos/{id}"
+    - "GET /relatorios/custos — campos custos_periodo.classificacao_capex_opex"
+    - "GET /ordens-servico/{id}/historico"
+    - "POST/DELETE /ordens-servico/{id}/equipe"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"

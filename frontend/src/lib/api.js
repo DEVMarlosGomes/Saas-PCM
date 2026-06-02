@@ -125,6 +125,8 @@ export const updateOrdemServico = (id, data) => api.put(`/ordens-servico/${id}`,
 // ─── Custos ───────────────────────────────────────────────
 export const getCustos = (params) => api.get('/custos', { params });
 export const createCusto = (data) => api.post('/custos', data);
+export const deleteCusto = (id) => api.delete(`/custos/${id}`);
+export const patchCustoMaoObra = (osId, data) => api.patch(`/ordens-servico/${osId}/custo-mao-obra`, data);
 
 // ─── Grupos / Subgrupos ───────────────────────────────────
 export const getGrupos = () => api.get('/grupos');
@@ -142,6 +144,7 @@ export const getUsers = () => api.get('/users');
 export const createUser = (data) => api.post('/users', data);
 export const updateUser = (id, data) => api.put(`/users/${id}`, data);
 export const deleteUser = (id) => api.delete(`/users/${id}`);
+export const buscarPorCracha = (cracha) => api.get('/users/buscar-por-cracha', { params: { cracha } });
 
 // ─── Organização ──────────────────────────────────────────
 export const getOrganization = () => api.get('/organization');
@@ -185,6 +188,14 @@ export const getRelatorioEquipamentos = (params) => api.get('/relatorios/equipam
 // ─── Reviews ──────────────────────────────────────────────
 export const getPendingReviews = () => api.get('/ordens-servico/pending-reviews');
 export const autoApproveExpired = () => api.post('/ordens-servico/auto-approve');
+
+// ─── Equipe de OS ─────────────────────────────────────────
+export const getOSEquipe = (osId) => api.get(`/ordens-servico/${osId}/equipe`);
+export const addOSEquipeMembro = (osId, data) => api.post(`/ordens-servico/${osId}/equipe`, data);
+export const removeOSEquipeMembro = (osId, membroId) => api.delete(`/ordens-servico/${osId}/equipe/${membroId}`);
+
+// ─── Histórico (timeline) de OS ────────────────────────────
+export const getOSHistorico = (osId) => api.get(`/ordens-servico/${osId}/historico`);
 
 // ─── Relatórios ───────────────────────────────────────────
 export const getRelatorioOS = (params) => api.get('/relatorios/os', { params });

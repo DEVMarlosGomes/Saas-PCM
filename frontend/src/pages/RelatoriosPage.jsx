@@ -3,11 +3,11 @@ import { useAuth } from "../contexts/AuthContext";
 import { getRelatorioOS, getRelatorioCustos, getRelatorioPareto, getRelatorioPreventivos, getRelatorioKPIs } from "../lib/api";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ComposedChart, Line, Cell,
+  ComposedChart, Line, Cell, Legend,
 } from "recharts";
 import {
   FileText, Download, Lock, Filter, TrendingUp, CheckCircle2,
-  AlertTriangle, Clock, DollarSign, Wrench, BarChart2, Calendar, Loader2, Printer,
+  AlertTriangle, Clock, DollarSign, Wrench, BarChart2, Calendar, Loader2, Printer, Info,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -24,14 +24,18 @@ const TABS = [
 ];
 
 const STATUS_LABELS = {
-  aberta: "Aberta", em_atendimento: "Em Atendimento",
-  aguardando_revisao: "Ag. Revisão", revisada: "Revisada",
-  fechada: "Fechada",
+  aberta: "Aberta", em_atendimento: "Em Atend.",
+  aguardando_peca: "Ag. Peça", aguardando_revisao: "Ag. Revisão",
+  revisada: "Revisada", fechada: "Fechada",
 };
 
 const STATUS_COLORS = {
-  aberta: "#3B82F6", em_atendimento: "#F59E0B",
-  aguardando_revisao: "#8B5CF6", revisada: "#10B981", fechada: "#64748B",
+  aberta:             "#3B82F6",   // azul
+  em_atendimento:     "#F59E0B",   // âmbar
+  aguardando_peca:    "#F97316",   // laranja
+  aguardando_revisao: "#8B5CF6",   // roxo
+  revisada:           "#10B981",   // verde
+  fechada:            "#94A3B8",   // slate claro (visível em dark mode)
 };
 
 function exportCSV(filename, rows) {
@@ -182,10 +186,30 @@ function TabOS() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <SmallKpi label="Total de OS" value={data.total} icon={<Wrench className="h-4 w-4 text-blue-400" />} />
-        <SmallKpi label="Atendimento SLA" value={data.sla_percent != null ? `${data.sla_percent}%` : "—"} icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />} />
-        <SmallKpi label="Tempo médio reparo" value={data.media_reparo_min != null ? `${data.media_reparo_min} min` : "—"} icon={<Clock className="h-4 w-4 text-amber-400" />} />
-        <SmallKpi label="Tipos" value={Object.keys(data.por_tipo || {}).join(" / ")} icon={<BarChart2 className="h-4 w-4 text-purple-400" />} />
+        <SmallKpi
+          label="Total de OS"
+          value={data.total}
+          icon={<Wrench className="h-4 w-4 text-blue-400" />}
+          tooltip="Número total de ordens de serviço abertas no período selecionado."
+        />
+        <SmallKpi
+          label="Atendimento SLA"
+          value={data.sla_percent != null ? `${data.sla_percent}%` : "—"}
+          icon={<CheckCircle2 className="h-4 w-4 text-emerald-400" />}
+          tooltip="Percentual de OS atendidas dentro do prazo de SLA por prioridade: Crítica ≤30min, Alta ≤60min, Média ≤120min, Baixa ≤480min."
+        />
+        <SmallKpi
+          label="Tempo médio reparo"
+          value={data.media_reparo_min != null ? `${data.media_reparo_min} min` : "—"}
+          icon={<Clock className="h-4 w-4 text-amber-400" />}
+          tooltip="Tempo médio (em minutos) entre o início e a conclusão do atendimento das OS encerradas no período."
+        />
+        <SmallKpi
+          label="Tipos"
+          value={Object.keys(data.por_tipo || {}).join(" / ")}
+          icon={<BarChart2 className="h-4 w-4 text-purple-400" />}
+          tooltip="Distribuição das OS por tipo: Corretiva (falha inesperada), Preventiva (manutenção planejada) e Preditiva (baseada em monitoramento)."
+        />
       </div>
 
       {/* Status chart */}
@@ -253,6 +277,177 @@ function OsTable({ rows }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ─── Análise de Custos CAPEX/OPEX ─────────────────────────────────────────────
+
+function fmtMes(yyyymm) {
+  if (!yyyymm || yyyymm === "—") return yyyymm;
+  const [y, m] = yyyymm.split("-");
+  const meses = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+  return `${meses[parseInt(m, 10) - 1] || m}/${y}`;
+}
+
+function KpiCard({ label, value, accent }) {
+  return (
+    <div className="bg-card border border-border/50 rounded-xl p-4 flex flex-col gap-1" data-testid={`kpi-custo-${label.toLowerCase().replace(/ /g, "-")}`}>
+      <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">{label}</p>
+      <p className={`text-xl font-heading font-bold ${accent || ""}`}>{value}</p>
+    </div>
+  );
+}
+
+function AnaliseCustos({ cp }) {
+  if (!cp) return null;
+  const { custo_materiais_total, custo_mao_obra_total, custo_parada_total, custo_total,
+          breakdown_por_tipo_os, breakdown_por_equipamento, classificacao_capex_opex, por_mes } = cp;
+
+  const mesData = (por_mes || []).map(m => ({
+    mes: fmtMes(m.mes),
+    materiais: m.materiais, mao_obra: m.mao_obra, parada: m.parada,
+  }));
+
+  const opex  = classificacao_capex_opex?.opex  || 0;
+  const capex = classificacao_capex_opex?.capex || 0;
+  const totalCapexOpex = opex + capex;
+
+  const tipoRows = Object.entries(breakdown_por_tipo_os || {}).map(([k, v]) => ({
+    tipo: k === "corretiva" ? "Corretiva" : k === "preventiva" ? "Preventiva" : "Preditiva",
+    ...v,
+  }));
+
+  return (
+    <div className="space-y-5 border-t border-border/50 pt-5">
+      <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+        <DollarSign className="h-4 w-4 text-primary" />Análise de Custos — Visão Completa
+      </p>
+
+      {/* 4 KPI cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="custos-kpi-cards">
+        <KpiCard label="Materiais / Peças" value={fmtBRL(custo_materiais_total)} />
+        <KpiCard label="Mão de Obra"       value={fmtBRL(custo_mao_obra_total)} />
+        <KpiCard label="Parada de Máquina" value={fmtBRL(custo_parada_total)} accent="text-red-500" />
+        <KpiCard label="Impacto Total"     value={fmtBRL(custo_total)} accent="text-primary" />
+      </div>
+
+      {/* Gráfico de barras empilhadas por mês */}
+      {mesData.length > 0 && (
+        <div className="bg-card border border-border/50 rounded-xl p-5">
+          <p className="text-sm font-semibold mb-4">Evolução Mensal de Custos</p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={mesData} barSize={28}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: "#64748B" }} tickLine={false} axisLine={false} />
+              <YAxis tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: "#64748B" }} tickLine={false} axisLine={false} width={52} />
+              <Tooltip
+                formatter={(v, name) => [fmtBRL(v), name === "materiais" ? "Materiais" : name === "mao_obra" ? "Mão de Obra" : "Parada"]}
+                contentStyle={{ background: "#0D1626", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, fontSize: 12 }}
+              />
+              <Legend formatter={v => v === "materiais" ? "Materiais" : v === "mao_obra" ? "Mão de Obra" : "Parada"} wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="materiais" stackId="a" fill="#3B82F6" radius={[0,0,0,0]} />
+              <Bar dataKey="mao_obra"  stackId="a" fill="#F59E0B" radius={[0,0,0,0]} />
+              <Bar dataKey="parada"    stackId="a" fill="#EF4444" radius={[4,4,0,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* CAPEX vs OPEX */}
+        <div className="bg-card border border-border/50 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border/40 text-sm font-semibold">Classificação CAPEX / OPEX</div>
+          <table className="w-full text-sm" data-testid="capex-opex-table">
+            <thead>
+              <tr className="border-b border-border/30">
+                {["Classificação", "Valor", "% do Total"].map(h => (
+                  <th key={h} className="text-left text-xs text-muted-foreground font-medium px-4 py-2">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { label: "OPEX", desc: "(Corretivas)", value: opex, color: "text-red-500" },
+                { label: "CAPEX", desc: "(Preventivas + Preditivas)", value: capex, color: "text-blue-500" },
+              ].map(row => (
+                <tr key={row.label} className="border-b border-border/10 hover:bg-muted/20 transition-colors">
+                  <td className="px-4 py-2.5">
+                    <span className={`font-semibold ${row.color}`}>{row.label}</span>
+                    <span className="text-[10px] text-muted-foreground ml-1">{row.desc}</span>
+                  </td>
+                  <td className="px-4 py-2.5 font-mono font-semibold">{fmtBRL(row.value)}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground text-xs">
+                    {totalCapexOpex > 0 ? `${((row.value / totalCapexOpex) * 100).toFixed(1)}%` : "—"}
+                  </td>
+                </tr>
+              ))}
+              <tr className="bg-muted/20">
+                <td className="px-4 py-2.5 font-bold text-xs uppercase tracking-wide">Total</td>
+                <td className="px-4 py-2.5 font-mono font-bold">{fmtBRL(totalCapexOpex)}</td>
+                <td className="px-4 py-2.5 text-xs font-medium">100%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Breakdown por tipo OS */}
+        <div className="bg-card border border-border/50 rounded-xl overflow-hidden">
+          <div className="px-4 py-3 border-b border-border/40 text-sm font-semibold">Custo por Tipo de OS</div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border/30">
+                {["Tipo", "Materiais", "Mão de Obra", "Parada", "Total"].map(h => (
+                  <th key={h} className="text-left text-xs text-muted-foreground font-medium px-4 py-2">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tipoRows.map((r, i) => (
+                <tr key={i} className="border-b border-border/10 hover:bg-muted/20 transition-colors">
+                  <td className="px-4 py-2.5 font-medium capitalize">{r.tipo}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs">{fmtBRL(r.materiais)}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs">{fmtBRL(r.mao_obra)}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-red-500">{fmtBRL(r.parada)}</td>
+                  <td className="px-4 py-2.5 font-mono font-semibold text-xs">{fmtBRL(r.total)}</td>
+                </tr>
+              ))}
+              {tipoRows.length === 0 && (
+                <tr><td colSpan={5} className="text-center py-6 text-muted-foreground text-xs">Nenhum dado no período</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Top 5 equipamentos — breakdown completo */}
+      {(breakdown_por_equipamento || []).length > 0 && (
+        <div className="bg-card border border-border/50 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-border/40 text-sm font-semibold">Top 5 Equipamentos — Breakdown de Custos</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" data-testid="top5-equipamentos-custos">
+              <thead>
+                <tr className="border-b border-border/30">
+                  {["Equipamento", "Materiais", "Mão de Obra", "Parada", "Total"].map(h => (
+                    <th key={h} className="text-left text-xs text-muted-foreground font-medium px-4 py-2.5">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {breakdown_por_equipamento.map((row, i) => (
+                  <tr key={i} className="border-b border-border/10 hover:bg-muted/20 transition-colors">
+                    <td className="px-4 py-2.5 font-medium max-w-[160px] truncate">{row.equipamento}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs">{fmtBRL(row.custo_materiais)}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs">{fmtBRL(row.custo_mao_obra)}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-red-500">{fmtBRL(row.custo_parada)}</td>
+                    <td className="px-4 py-2.5 font-mono font-bold text-xs">{fmtBRL(row.custo_total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -352,7 +547,7 @@ function TabCustos({ isAdmin, isLider, userSetor }) {
       </div>
 
       <div className="bg-card border border-border/50 rounded-xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-border/40 text-sm font-semibold">Por Equipamento</div>
+        <div className="px-5 py-3 border-b border-border/40 text-sm font-semibold">Por Equipamento (materiais)</div>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border/30">
@@ -381,6 +576,9 @@ function TabCustos({ isAdmin, isLider, userSetor }) {
           </tbody>
         </table>
       </div>
+
+      {/* ── Análise de Custos (CAPEX/OPEX) ──────────────────────────────────── */}
+      {data.custos_periodo && <AnaliseCustos cp={data.custos_periodo} />}
     </div>
   );
 }
@@ -521,19 +719,31 @@ function TabPreventivos() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <SmallKpi label="Total de Planos" value={data.total} icon={<Calendar className="h-4 w-4 text-blue-400" />} />
+        <SmallKpi
+          label="Total de Planos"
+          value={data.total}
+          icon={<Calendar className="h-4 w-4 text-blue-400" />}
+          tooltip="Número total de planos preventivos cadastrados e ativos para os equipamentos monitorados."
+        />
         <SmallKpi
           label="Compliance"
           value={`${data.compliance_percent}%`}
           icon={<CheckCircle2 className="h-4 w-4" style={{ color: complianceColor }} />}
+          tooltip="Percentual de planos preventivos executados dentro do prazo em relação ao total de planos no período."
         />
         <SmallKpi
           label="Planos Vencidos"
           value={data.vencidos}
           icon={<AlertTriangle className="h-4 w-4 text-red-400" />}
           highlight={data.vencidos > 0}
+          tooltip="Planos com data de próxima execução ultrapassada sem registro de execução. Requerem ação imediata."
         />
-        <SmallKpi label="Próximos 7 dias" value={data.proximos_7d} icon={<Clock className="h-4 w-4 text-amber-400" />} />
+        <SmallKpi
+          label="Próximos 7 dias"
+          value={data.proximos_7d}
+          icon={<Clock className="h-4 w-4 text-amber-400" />}
+          tooltip="Número de planos preventivos com execução prevista nos próximos 7 dias. Prepare a equipe."
+        />
       </div>
 
       <div className="flex justify-end gap-2">
@@ -609,10 +819,23 @@ function LoadingCenter() {
   );
 }
 
-function SmallKpi({ label, value, icon, highlight }) {
+function SmallKpi({ label, value, icon, highlight, tooltip }) {
   return (
-    <div className={`border border-border/50 rounded-xl p-4 bg-card ${highlight ? "border-red-500/30" : ""}`}>
-      <div className="flex items-center gap-2 mb-2">{icon}</div>
+    <div className={`relative border border-border/50 rounded-xl p-4 bg-card ${highlight ? "border-red-500/30" : ""}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">{icon}</div>
+        {tooltip && (
+          <div className="relative group/tip">
+            <Info className="h-3.5 w-3.5 text-muted-foreground/40 cursor-help group-hover/tip:text-muted-foreground transition-colors" />
+            {/* Tooltip bubble */}
+            <div className="absolute right-0 bottom-6 z-50 w-52 bg-popover border border-border text-xs text-foreground/80 rounded-lg p-2.5 shadow-xl
+                            opacity-0 pointer-events-none group-hover/tip:opacity-100 transition-opacity duration-150 leading-relaxed">
+              {tooltip}
+              <div className="absolute -bottom-1 right-1.5 w-2 h-2 bg-popover border-r border-b border-border rotate-45" />
+            </div>
+          </div>
+        )}
+      </div>
       <p className="text-xl font-bold font-heading tabular-nums">{value}</p>
       <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
     </div>

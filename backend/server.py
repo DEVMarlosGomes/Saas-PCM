@@ -68,8 +68,18 @@ SMTP_FROM = os.environ.get("SMTP_FROM", "noreply@aurix.com.br")
 class UserRole(str, enum.Enum):
     SUPERUSUARIO = "superusuario"
     ADMIN = "admin"
+    # Grupo MANUTENÇÃO
+    GERENTE_INDUSTRIAL = "gerente_industrial"
+    SUPERVISOR_MANUTENCAO = "supervisor_manutencao"
+    LIDER_MANUTENCAO_ELETRICA = "lider_manutencao_eletrica"
+    LIDER_MANUTENCAO_MECANICA = "lider_manutencao_mecanica"
+    ANALISTA_MANUTENCAO = "analista_manutencao"
+    ENGENHEIRO_MANUTENCAO = "engenheiro_manutencao"
     LIDER = "lider"
     TECNICO = "tecnico"
+    # Grupo PRODUÇÃO
+    LIDER_PRODUCAO = "lider_producao"
+    SUPERVISOR_PRODUCAO = "supervisor_producao"
     OPERADOR = "operador"
 
 class TipoOS(str, enum.Enum):
@@ -196,6 +206,7 @@ class User(Base):
     employee_id = Column(String(20), nullable=True)           # matrícula (obrigatório para técnico)
     generic_session_sector = Column(String(100), nullable=True)  # setor selecionado no login genérico
     ativo = Column(Boolean, default=True)
+    valor_hora = Column(Float, nullable=True)   # custo/hora do profissional (para cálculo de mão de obra)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -292,11 +303,27 @@ class OrdemServico(Base):
     review_notes = Column(Text, nullable=True)
     auto_approved = Column(Boolean, default=False)
 
+    # Spec v4 — identificação do solicitante físico (quem pediu a manutenção)
+    solicitante_cracha = Column(String(30), nullable=True)
+    solicitante_nome = Column(String(200), nullable=True)
+    solicitante_user_id = Column(UUID(as_uuid=True), nullable=True)
+
+    # Spec v5 — relatório do técnico executor (obrigatório para concluir)
+    relatorio_o_que_foi_realizado = Column(Text, nullable=True)
+    relatorio_analise_problema = Column(Text, nullable=True)
+    relatorio_preenchido_em = Column(DateTime(timezone=True), nullable=True)
+    relatorio_preenchido_por = Column(UUID(as_uuid=True), nullable=True)
+
+    # Spec v6 — custo de mão de obra
+    custo_mao_obra = Column(Float, nullable=True)      # calculado ao concluir
+    horas_trabalhadas = Column(Float, nullable=True)   # horas de atendimento
+    valor_hora_tecnico = Column(Float, nullable=True)  # snapshot do valor/hora do técnico
+
     __table_args__ = (Index('idx_os_org', 'organization_id'),)
 
 class CustoOS(Base):
     __tablename__ = "custos_os"
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
     ordem_servico_id = Column(UUID(as_uuid=True), ForeignKey("ordens_servico.id"), nullable=False)
@@ -304,6 +331,7 @@ class CustoOS(Base):
     descricao = Column(String(255), nullable=False)
     valor = Column(Float, nullable=False)
     quantidade = Column(Float, default=1.0)
+    criado_por = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class Setor(Base):
@@ -379,6 +407,35 @@ class PaymentTransaction(Base):
     metadata_json = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+class OSEquipe(Base):
+    """Membros da equipe de execução de uma OS preventiva/preditiva."""
+    __tablename__ = "os_equipe"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    os_id = Column(UUID(as_uuid=True), ForeignKey("ordens_servico.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    nome_membro = Column(String(200), nullable=False)
+    cracha = Column(String(30), nullable=True)
+    especialidade = Column(String(100), nullable=True)  # eletrica|mecanica|civil|instrumentacao|ti|outro
+    adicionado_em = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    adicionado_por = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    __table_args__ = (Index('idx_os_equipe_os', 'os_id'),)
+
+class OSHistorico(Base):
+    """Registro de etapas/transições de status de uma OS (timeline)."""
+    __tablename__ = "os_historico"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    os_id = Column(UUID(as_uuid=True), ForeignKey("ordens_servico.id"), nullable=False)
+    status_novo = Column(String(50), nullable=False)
+    etapa_label = Column(String(200), nullable=False)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    user_nome = Column(String(200), nullable=True)
+
+    __table_args__ = (Index('idx_os_historico_os', 'os_id'),)
 
 class Notificacao(Base):
     __tablename__ = "notificacoes"
@@ -582,6 +639,9 @@ class OSCreate(BaseModel):
     falha_modo: Optional[str] = None
     falha_causa: Optional[str] = None
     failure_group: Optional[str] = None  # grupo de falha textual (ELETRICO, HIDRAULICO, MECANICO)
+    # Identificação do solicitante físico
+    solicitante_cracha: Optional[str] = None
+    solicitante_nome: Optional[str] = None
 
 class OSUpdate(BaseModel):
     status: Optional[StatusOS] = None
@@ -592,6 +652,20 @@ class OSUpdate(BaseModel):
     falha_causa: Optional[str] = None
     failure_group: Optional[str] = None
     review_notes: Optional[str] = None
+    # Relatório do técnico (obrigatório para transição → aguardando_revisao)
+    relatorio_o_que_foi_realizado: Optional[str] = None
+    relatorio_analise_problema: Optional[str] = None
+
+class OSHistoricoResponse(BaseModel):
+    id: str
+    os_id: str
+    status_novo: str
+    etapa_label: str
+    timestamp: datetime
+    user_id: Optional[str] = None
+    user_nome: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 class OSResponse(BaseModel):
     id: str
@@ -638,8 +712,42 @@ class OSResponse(BaseModel):
     review_deadline: Optional[datetime] = None
     review_notes: Optional[str] = None
     auto_approved: bool = False
+    # Identificação do solicitante físico
+    solicitante_cracha: Optional[str] = None
+    solicitante_user_id: Optional[str] = None
+    # Relatório do técnico executor
+    relatorio_o_que_foi_realizado: Optional[str] = None
+    relatorio_analise_problema: Optional[str] = None
+    relatorio_preenchido_em: Optional[datetime] = None
+    relatorio_preenchido_por_nome: Optional[str] = None
+    # Custo de mão de obra
+    custo_mao_obra: Optional[float] = None
+    horas_trabalhadas: Optional[float] = None
+    valor_hora_tecnico: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class OSEquipeCreate(BaseModel):
+    cracha: Optional[str] = None
+    nome_membro: Optional[str] = None
+    especialidade: Optional[str] = None  # eletrica|mecanica|civil|instrumentacao|ti|outro
+
+class OSEquipeResponse(BaseModel):
+    id: str
+    os_id: str
+    user_id: Optional[str] = None
+    nome_membro: str
+    cracha: Optional[str] = None
+    especialidade: Optional[str] = None
+    adicionado_em: datetime
+    adicionado_por: Optional[str] = None
+    adicionado_por_nome: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class CustoMaoObraUpdate(BaseModel):
+    horas_trabalhadas: float
+    valor_hora_tecnico: float
 
 class CustoCreate(BaseModel):
     ordem_servico_id: str
@@ -656,8 +764,9 @@ class CustoResponse(BaseModel):
     valor: float
     quantidade: float
     organization_id: str
+    criado_por: Optional[str] = None
     created_at: datetime
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 class PlanoCreate(BaseModel):
@@ -750,6 +859,55 @@ def ensure_database_schema():
             "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'superusuario' BEFORE 'admin'",
             # Spec v2 — StatusOS enum extension (aguardando_peca)
             "ALTER TYPE statusos ADD VALUE IF NOT EXISTS 'aguardando_peca' BEFORE 'aguardando_revisao'",
+            # Spec v4 — equipe de execução (preventiva/preditiva)
+            """CREATE TABLE IF NOT EXISTS os_equipe (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                os_id UUID NOT NULL REFERENCES ordens_servico(id) ON DELETE CASCADE,
+                user_id UUID REFERENCES users(id),
+                nome_membro VARCHAR(200) NOT NULL,
+                cracha VARCHAR(30),
+                especialidade VARCHAR(100),
+                adicionado_em TIMESTAMPTZ DEFAULT now(),
+                adicionado_por UUID REFERENCES users(id)
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_os_equipe_os ON os_equipe (os_id)",
+            # Spec v4 — identificação do solicitante físico na OS
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS solicitante_cracha VARCHAR(30)",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS solicitante_nome VARCHAR(200)",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS solicitante_user_id UUID",
+            # Spec v5 — relatório do técnico executor
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS relatorio_o_que_foi_realizado TEXT",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS relatorio_analise_problema TEXT",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS relatorio_preenchido_em TIMESTAMPTZ",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS relatorio_preenchido_por UUID",
+            # Spec v5 — histórico de etapas (timeline)
+            """CREATE TABLE IF NOT EXISTS os_historico (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                os_id UUID NOT NULL REFERENCES ordens_servico(id) ON DELETE CASCADE,
+                status_novo VARCHAR(50) NOT NULL,
+                etapa_label VARCHAR(200) NOT NULL,
+                timestamp TIMESTAMPTZ DEFAULT now(),
+                user_id UUID REFERENCES users(id),
+                user_nome VARCHAR(200)
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_os_historico_os ON os_historico (os_id)",
+            # Spec v6 — valor_hora do profissional
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS valor_hora FLOAT",
+            # Spec v6 — custo de mão de obra na OS
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS custo_mao_obra FLOAT",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS horas_trabalhadas FLOAT",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS valor_hora_tecnico FLOAT",
+            # Spec v6 — rastreabilidade de quem criou o custo
+            "ALTER TABLE custos_os ADD COLUMN IF NOT EXISTS criado_por UUID REFERENCES users(id)",
+            # Spec v4 — novos roles de manutenção e produção
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'gerente_industrial'",
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'supervisor_manutencao'",
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'lider_manutencao_eletrica'",
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'lider_manutencao_mecanica'",
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'analista_manutencao'",
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'engenheiro_manutencao'",
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'lider_producao'",
+            "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'supervisor_producao'",
         ]
         try:
             from sqlalchemy import text as sa_text
@@ -1332,8 +1490,9 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
                          {"id": str(equip.id)}).fetchone()
         equipamento_setor = row[0] if row else None
 
-    solicitante_nome = None
-    if o.solicitante_id:
+    # Prioriza o nome físico do solicitante (digitado ou resolvido via crachá)
+    solicitante_nome = getattr(o, 'solicitante_nome', None)
+    if not solicitante_nome and o.solicitante_id:
         sol = db.query(User).filter(User.id == o.solicitante_id).first()
         if sol:
             solicitante_nome = sol.nome
@@ -1365,6 +1524,14 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
     except Exception:
         occ_list = []
     occurrences_count = len(occ_list)
+
+    # Relatório: resolver nome de quem preencheu
+    _rel_preenchido_nome = None
+    _rel_por_id = getattr(o, 'relatorio_preenchido_por', None)
+    if _rel_por_id:
+        _rel_user = db.query(User).filter(User.id == _rel_por_id).first()
+        if _rel_user:
+            _rel_preenchido_nome = _rel_user.nome
 
     # Financial visibility: ADMIN/SUPERUSUARIO → full; LIDER → own setor; TECNICO/OPERADOR → none
     if user is not None and user.role not in (UserRole.ADMIN, UserRole.SUPERUSUARIO):
@@ -1409,7 +1576,16 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
         custo_parada=custo_parada,
         review_deadline=o.review_deadline,
         review_notes=o.review_notes,
-        auto_approved=o.auto_approved or False
+        auto_approved=o.auto_approved or False,
+        solicitante_cracha=getattr(o, 'solicitante_cracha', None),
+        solicitante_user_id=str(o.solicitante_user_id) if getattr(o, 'solicitante_user_id', None) else None,
+        relatorio_o_que_foi_realizado=getattr(o, 'relatorio_o_que_foi_realizado', None),
+        relatorio_analise_problema=getattr(o, 'relatorio_analise_problema', None),
+        relatorio_preenchido_em=getattr(o, 'relatorio_preenchido_em', None),
+        relatorio_preenchido_por_nome=_rel_preenchido_nome,
+        custo_mao_obra=getattr(o, 'custo_mao_obra', None),
+        horas_trabalhadas=getattr(o, 'horas_trabalhadas', None),
+        valor_hora_tecnico=getattr(o, 'valor_hora_tecnico', None),
     )
 
 def calculate_sla(prioridade: PrioridadeOS, tempo_resposta: int) -> bool:
@@ -1432,6 +1608,29 @@ def check_reincidencia(db: Session, org_id: str, equipamento_id: str, falha_tipo
         OrdemServico.created_at >= thirty_days_ago
     ).count()
     return count > 1
+
+_ETAPAS_LABEL = {
+    "aberta":             "Abertura da OS",
+    "em_atendimento":     "Início do atendimento",
+    "aguardando_peca":    "Aguardando peça/material",
+    "aguardando_revisao": "Enviada para revisão",
+    "revisada":           "Revisão concluída",
+    "fechada":            "Finalização da OS",
+    "cancelada":          "OS cancelada",
+}
+
+def record_os_historico(db: Session, os_id, status_novo: str, user_id=None, user_nome: str = None, timestamp=None):
+    """Registra uma etapa de transição no histórico da OS."""
+    label = _ETAPAS_LABEL.get(status_novo, status_novo)
+    entry = OSHistorico(
+        os_id=os_id,
+        status_novo=status_novo,
+        etapa_label=label,
+        timestamp=timestamp or datetime.now(timezone.utc),
+        user_id=user_id,
+        user_nome=user_nome,
+    )
+    db.add(entry)
 
 # ========== APP SETUP ==========
 app = FastAPI(title="AURIX — Tecnologia para a Gestão Industrial", version="2.0.0")
@@ -1781,6 +1980,23 @@ async def get_sectors_for_tecnico(
 
 
 # ========== USERS ENDPOINTS ==========
+@api_router.get("/users/buscar-por-cracha")
+async def buscar_por_cracha(cracha: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Lookup de usuário pelo crachá/matrícula (employee_id). Retorna info resumida sem erro caso não encontre."""
+    found = db.query(User).filter(
+        User.organization_id == user.organization_id,
+        User.employee_id == cracha,
+        User.ativo == True,
+    ).first()
+    if found:
+        return {
+            "encontrado": True,
+            "nome_completo": found.nome,
+            "role": found.role.value,
+            "setor": found.setor,
+        }
+    return {"encontrado": False, "nome_completo": None, "role": None, "setor": None}
+
 @api_router.get("/users", response_model=List[UserResponse])
 async def list_users(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
@@ -2324,24 +2540,35 @@ async def get_equipamento(equipamento_id: str, user: User = Depends(get_current_
 
 @api_router.put("/equipamentos/{equipamento_id}", response_model=EquipamentoResponse)
 async def update_equipamento(equipamento_id: str, data: EquipamentoCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
+    if user.role not in [UserRole.ADMIN, UserRole.GERENTE_INDUSTRIAL, UserRole.SUPERVISOR_MANUTENCAO]:
         raise HTTPException(status_code=403, detail="Acesso negado")
-    
+
     equipamento = db.query(Equipamento).filter(
         Equipamento.id == equipamento_id,
         Equipamento.organization_id == user.organization_id
     ).first()
     if not equipamento:
         raise HTTPException(status_code=404, detail="Equipamento não encontrado")
-    
+
+    import json as _json_eq
+    _tracked = ["nome", "descricao", "localizacao", "valor_hora", "grupo_id", "subgrupo_id", "criticidade"]
+    antes = {k: str(getattr(equipamento, k)) if getattr(equipamento, k) is not None else None for k in _tracked}
+
     for key, value in data.model_dump().items():
         setattr(equipamento, key, value)
-    
+
     db.commit()
     db.refresh(equipamento)
-    
-    create_audit_log(db, str(user.organization_id), str(user.id), "equipamento", str(equipamento.id), "update")
-    
+
+    depois = {k: str(getattr(equipamento, k)) if getattr(equipamento, k) is not None else None for k in _tracked}
+    alterados = {k: {"anterior": antes[k], "novo": depois[k]} for k in _tracked if antes[k] != depois[k]}
+
+    create_audit_log(
+        db, str(user.organization_id), str(user.id), "equipamento", str(equipamento.id), "update",
+        dados_anteriores=_json_eq.dumps(antes, ensure_ascii=False),
+        dados_novos=_json_eq.dumps({"alterados": alterados}, ensure_ascii=False),
+    )
+
     return EquipamentoResponse(
         id=str(equipamento.id), codigo=equipamento.codigo, nome=equipamento.nome,
         descricao=equipamento.descricao, localizacao=equipamento.localizacao,
@@ -2354,22 +2581,42 @@ async def update_equipamento(equipamento_id: str, data: EquipamentoCreate, user:
 
 @api_router.delete("/equipamentos/{equipamento_id}")
 async def delete_equipamento(equipamento_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
-        raise HTTPException(status_code=403, detail="Acesso negado")
-    
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores podem excluir equipamentos.")
+
     equipamento = db.query(Equipamento).filter(
         Equipamento.id == equipamento_id,
         Equipamento.organization_id == user.organization_id
     ).first()
     if not equipamento:
         raise HTTPException(status_code=404, detail="Equipamento não encontrado")
-    
+
+    # Bloqueia exclusão se houver OS em aberto
+    os_ativas = db.query(OrdemServico).filter(
+        OrdemServico.equipamento_id == equipamento_id,
+        OrdemServico.organization_id == user.organization_id,
+        OrdemServico.status != StatusOS.FECHADA,
+    ).all()
+    if os_ativas:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "equipamento_com_os_ativa",
+                "message": f"Não é possível excluir. Este equipamento possui {len(os_ativas)} OS em aberto.",
+                "os_ativas": [{"id": str(o.id), "numero": o.numero, "status": o.status} for o in os_ativas],
+            },
+        )
+
+    import json as _json_del
     equipamento.ativo = False
     db.commit()
-    
-    create_audit_log(db, str(user.organization_id), str(user.id), "equipamento", str(equipamento.id), "delete")
-    
-    return {"message": "Equipamento desativado"}
+
+    create_audit_log(
+        db, str(user.organization_id), str(user.id), "equipamento", str(equipamento.id), "delete",
+        dados_novos=_json_del.dumps({"motivo": "exclusao_admin", "soft_delete": True}, ensure_ascii=False),
+    )
+
+    return {"message": "Equipamento excluído com sucesso"}
 
 # ========== ORDENS DE SERVIÇO ENDPOINTS ==========
 @api_router.get("/ordens-servico", response_model=List[OSResponse])
@@ -2400,6 +2647,20 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
     allowed, msg = check_plan_limit(db, org, "os")
     if not allowed:
         raise HTTPException(status_code=402, detail=msg)
+
+    # ── FASE 4: Restrição de tipo por grupo funcional ────────────────────────────
+    _GRUPO_PRODUCAO_ROLES = [
+        UserRole.OPERADOR, UserRole.LIDER_PRODUCAO, UserRole.SUPERVISOR_PRODUCAO, UserRole.LIDER,
+    ]
+    _TIPOS_EXCLUSIVOS_MANUTENCAO = [TipoOS.PREVENTIVA, TipoOS.PREDITIVA]
+    if data.tipo in _TIPOS_EXCLUSIVOS_MANUTENCAO and user.role in _GRUPO_PRODUCAO_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "tipo_os_nao_permitido",
+                "message": "Operadores e líderes de produção só podem abrir OS corretivas.",
+            },
+        )
 
     # Verify equipment exists
     equipamento = db.query(Equipamento).filter(
@@ -2444,6 +2705,20 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
                 },
             )
 
+    # ── FASE 4: Resolver crachá do solicitante físico ───────────────────────────
+    _sol_cracha = (data.solicitante_cracha or "").strip() or None
+    _sol_nome = (data.solicitante_nome or "").strip() or None
+    _sol_user_id = None
+    if _sol_cracha:
+        _sol_user = db.query(User).filter(
+            User.organization_id == user.organization_id,
+            User.employee_id == _sol_cracha,
+            User.ativo == True,
+        ).first()
+        if _sol_user:
+            _sol_nome = _sol_user.nome
+            _sol_user_id = _sol_user.id
+
     numero = get_next_os_number(db, str(user.organization_id))
     now = datetime.now(timezone.utc)
 
@@ -2463,6 +2738,9 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
         organization_id=user.organization_id,
         downtime_start=now,
         technician_employee_id=user.employee_id if user.role == UserRole.TECNICO else None,
+        solicitante_cracha=_sol_cracha,
+        solicitante_nome=_sol_nome,
+        solicitante_user_id=_sol_user_id,
     )
 
     # Check reincidência
@@ -2473,6 +2751,8 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
     db.refresh(os)
 
     create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os.id), "create")
+    record_os_historico(db, os.id, "aberta", user_id=user.id, user_nome=user.nome, timestamp=now)
+    db.commit()
 
     return build_os_response(os, db, user=user)
 
@@ -2519,10 +2799,46 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
             pass
 
         elif data.status == StatusOS.AGUARDANDO_REVISAO:
+            # ── Spec v5: exige relatório do técnico ──────────────────────────
+            _rel_o_que = (data.relatorio_o_que_foi_realizado or "").strip()
+            _rel_analise = (data.relatorio_analise_problema or "").strip()
+            if not _rel_o_que or not _rel_analise:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "relatorio_obrigatorio",
+                        "message": "Preencha 'O que foi realizado' e 'Análise do problema' para concluir a OS.",
+                    },
+                )
+            os.relatorio_o_que_foi_realizado = _rel_o_que
+            os.relatorio_analise_problema = _rel_analise
+            os.relatorio_preenchido_em = now
+            os.relatorio_preenchido_por = user.id
+            # ─────────────────────────────────────────────────────────────────
             os.fim_atendimento = now
             if os.inicio_atendimento:
                 os.tempo_reparo = int((now - os.inicio_atendimento).total_seconds() / 60)
             os.tempo_total = int((now - os.created_at).total_seconds() / 60)
+
+            # ── Spec v6: calcular custo de mão de obra ───────────────────────
+            _inicio = os.inicio_atendimento or os.created_at
+            _horas = round((now - _inicio).total_seconds() / 3600, 2)
+            _vh_tec = 0.0
+            if os.tecnico_id:
+                _tec_usr = db.query(User).filter(User.id == os.tecnico_id).first()
+                if _tec_usr and _tec_usr.valor_hora:
+                    _vh_tec = float(_tec_usr.valor_hora)
+            # Acumula custo de membros da equipe (preventiva/preditiva)
+            _custo_mo = _horas * _vh_tec
+            _membros = db.query(OSEquipe).filter(OSEquipe.os_id == str(os.id)).all()
+            for _m in _membros:
+                if _m.user_id:
+                    _m_usr = db.query(User).filter(User.id == _m.user_id).first()
+                    if _m_usr and _m_usr.valor_hora:
+                        _custo_mo += _horas * float(_m_usr.valor_hora)
+            os.horas_trabalhadas = _horas
+            os.valor_hora_tecnico = _vh_tec
+            os.custo_mao_obra = round(_custo_mo, 2)
             
             # Auto-assign leader as reviewer
             leader = db.query(User).filter(
@@ -2611,14 +2927,19 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
     
     db.commit()
     db.refresh(os)
-    
+
+    # Grava entrada no histórico se houve mudança de status
+    if data.status:
+        record_os_historico(db, os.id, data.status.value, user_id=user.id, user_nome=user.nome, timestamp=now)
+        db.commit()
+
     # Enhanced audit log with field changes
     create_audit_log(
         db, str(user.organization_id), str(user.id), "ordem_servico", str(os.id), "update",
         dados_anteriores=None,
         dados_novos=json_lib.dumps(changes, ensure_ascii=False) if changes else None
     )
-    
+
     return build_os_response(os, db, user=user)
 
 @api_router.post("/ordens-servico/auto-approve")
@@ -2830,6 +3151,112 @@ async def patch_ocorrencia(
     }
 
 
+# ========== EQUIPE DE OS (preventiva/preditiva) ==========
+_GRUPO_MANUTENCAO_ROLES = [
+    UserRole.ADMIN, UserRole.TECNICO,
+    UserRole.LIDER_MANUTENCAO_ELETRICA, UserRole.LIDER_MANUTENCAO_MECANICA,
+    UserRole.SUPERVISOR_MANUTENCAO, UserRole.ANALISTA_MANUTENCAO,
+    UserRole.ENGENHEIRO_MANUTENCAO, UserRole.GERENTE_INDUSTRIAL,
+]
+
+def _build_equipe_response(m: OSEquipe, db: Session) -> OSEquipeResponse:
+    adicionado_por_nome = None
+    if m.adicionado_por:
+        u = db.query(User).filter(User.id == m.adicionado_por).first()
+        if u:
+            adicionado_por_nome = u.nome
+    return OSEquipeResponse(
+        id=str(m.id), os_id=str(m.os_id),
+        user_id=str(m.user_id) if m.user_id else None,
+        nome_membro=m.nome_membro,
+        cracha=m.cracha, especialidade=m.especialidade,
+        adicionado_em=m.adicionado_em,
+        adicionado_por=str(m.adicionado_por) if m.adicionado_por else None,
+        adicionado_por_nome=adicionado_por_nome,
+    )
+
+@api_router.get("/ordens-servico/{os_id}/equipe", response_model=List[OSEquipeResponse])
+async def get_os_equipe(os_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id, OrdemServico.organization_id == user.organization_id
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+    membros = db.query(OSEquipe).filter(OSEquipe.os_id == os_id).order_by(OSEquipe.adicionado_em).all()
+    return [_build_equipe_response(m, db) for m in membros]
+
+@api_router.post("/ordens-servico/{os_id}/equipe", response_model=OSEquipeResponse)
+async def add_os_equipe(os_id: str, data: OSEquipeCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role not in _GRUPO_MANUTENCAO_ROLES:
+        raise HTTPException(status_code=403, detail="Apenas equipe de manutenção pode gerenciar a equipe de OS.")
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id, OrdemServico.organization_id == user.organization_id
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+
+    # Resolve membro via crachá se fornecido
+    _user_id = None
+    _nome = (data.nome_membro or "").strip()
+    _cracha = (data.cracha or "").strip() or None
+    if _cracha:
+        found = db.query(User).filter(
+            User.organization_id == user.organization_id,
+            User.employee_id == _cracha,
+            User.ativo == True,
+        ).first()
+        if found:
+            _user_id = found.id
+            _nome = found.nome
+
+    if not _nome:
+        raise HTTPException(status_code=422, detail="Nome do membro é obrigatório.")
+
+    membro = OSEquipe(
+        os_id=os_id,
+        user_id=_user_id,
+        nome_membro=_nome,
+        cracha=_cracha,
+        especialidade=(data.especialidade or "").strip() or None,
+        adicionado_por=user.id,
+    )
+    db.add(membro)
+    db.commit()
+    db.refresh(membro)
+    return _build_equipe_response(membro, db)
+
+@api_router.get("/ordens-servico/{os_id}/historico", response_model=List[OSHistoricoResponse])
+async def get_os_historico(os_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Retorna a timeline de etapas de uma OS, ordenada por timestamp ASC."""
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id, OrdemServico.organization_id == user.organization_id
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+    entradas = db.query(OSHistorico).filter(OSHistorico.os_id == os_id).order_by(OSHistorico.timestamp.asc()).all()
+    return [OSHistoricoResponse(
+        id=str(e.id), os_id=str(e.os_id),
+        status_novo=e.status_novo, etapa_label=e.etapa_label,
+        timestamp=e.timestamp,
+        user_id=str(e.user_id) if e.user_id else None,
+        user_nome=e.user_nome,
+    ) for e in entradas]
+
+@api_router.delete("/ordens-servico/{os_id}/equipe/{membro_id}", status_code=204)
+async def remove_os_equipe(os_id: str, membro_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _PODE_REMOVER_ROLES = [UserRole.ADMIN, UserRole.SUPERVISOR_MANUTENCAO, UserRole.GERENTE_INDUSTRIAL,
+                           UserRole.LIDER_MANUTENCAO_ELETRICA, UserRole.LIDER_MANUTENCAO_MECANICA]
+    membro = db.query(OSEquipe).filter(
+        OSEquipe.id == membro_id, OSEquipe.os_id == os_id
+    ).first()
+    if not membro:
+        raise HTTPException(status_code=404, detail="Membro não encontrado")
+    if user.role not in _PODE_REMOVER_ROLES and str(membro.adicionado_por) != str(user.id):
+        raise HTTPException(status_code=403, detail="Sem permissão para remover este membro.")
+    db.delete(membro)
+    db.commit()
+    return None
+
 # ========== CUSTOS ENDPOINTS ==========
 @api_router.get("/custos", response_model=List[CustoResponse])
 async def list_custos(ordem_servico_id: Optional[str] = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -2840,7 +3267,9 @@ async def list_custos(ordem_servico_id: Optional[str] = None, user: User = Depen
     return [CustoResponse(
         id=str(c.id), ordem_servico_id=str(c.ordem_servico_id), tipo=c.tipo.value,
         descricao=c.descricao, valor=c.valor, quantidade=c.quantidade,
-        organization_id=str(c.organization_id), created_at=c.created_at
+        organization_id=str(c.organization_id),
+        criado_por=str(c.criado_por) if getattr(c, 'criado_por', None) else None,
+        created_at=c.created_at,
     ) for c in custos]
 
 @api_router.post("/custos", response_model=CustoResponse)
@@ -2862,17 +3291,66 @@ async def create_custo(data: CustoCreate, user: User = Depends(get_current_user)
         descricao=data.descricao,
         valor=data.valor,
         quantidade=data.quantidade,
-        organization_id=user.organization_id
+        organization_id=user.organization_id,
+        criado_por=user.id,
     )
     db.add(custo)
     db.commit()
     db.refresh(custo)
-    
+
+    create_audit_log(db, str(user.organization_id), str(user.id), "custo_os", str(custo.id), "create")
+
     return CustoResponse(
         id=str(custo.id), ordem_servico_id=str(custo.ordem_servico_id), tipo=custo.tipo.value,
         descricao=custo.descricao, valor=custo.valor, quantidade=custo.quantidade,
-        organization_id=str(custo.organization_id), created_at=custo.created_at
+        organization_id=str(custo.organization_id),
+        criado_por=str(custo.criado_por) if custo.criado_por else None,
+        created_at=custo.created_at,
     )
+
+@api_router.delete("/custos/{custo_id}", status_code=204)
+async def delete_custo(custo_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    custo = db.query(CustoOS).filter(
+        CustoOS.id == custo_id,
+        CustoOS.organization_id == user.organization_id,
+    ).first()
+    if not custo:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+
+    _PODE_EXCLUIR_CUSTO = [
+        UserRole.ADMIN, UserRole.SUPERVISOR_MANUTENCAO, UserRole.GERENTE_INDUSTRIAL,
+        UserRole.LIDER_MANUTENCAO_ELETRICA, UserRole.LIDER_MANUTENCAO_MECANICA, UserRole.ANALISTA_MANUTENCAO,
+    ]
+    # Quem criou o item, técnico atribuído à OS, ou supervisores
+    os_obj = db.query(OrdemServico).filter(OrdemServico.id == custo.ordem_servico_id).first()
+    eh_tecnico_responsavel = os_obj and str(os_obj.tecnico_id) == str(user.id)
+    eh_criador = custo.criado_por and str(custo.criado_por) == str(user.id)
+
+    if not eh_criador and not eh_tecnico_responsavel and user.role not in _PODE_EXCLUIR_CUSTO:
+        raise HTTPException(status_code=403, detail="Sem permissão para remover este item.")
+
+    create_audit_log(db, str(user.organization_id), str(user.id), "custo_os", str(custo.id), "delete")
+    db.delete(custo)
+    db.commit()
+    return None
+
+@api_router.patch("/ordens-servico/{os_id}/custo-mao-obra")
+async def patch_custo_mao_obra(os_id: str, data: CustoMaoObraUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _PODE_CORRIGIR = [UserRole.ADMIN, UserRole.SUPERVISOR_MANUTENCAO, UserRole.ANALISTA_MANUTENCAO, UserRole.GERENTE_INDUSTRIAL]
+    if user.role not in _PODE_CORRIGIR:
+        raise HTTPException(status_code=403, detail="Sem permissão para ajustar custo de mão de obra.")
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id, OrdemServico.organization_id == user.organization_id
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+    os_obj.horas_trabalhadas = data.horas_trabalhadas
+    os_obj.valor_hora_tecnico = data.valor_hora_tecnico
+    os_obj.custo_mao_obra = round(data.horas_trabalhadas * data.valor_hora_tecnico, 2)
+    db.commit()
+    create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os_obj.id), "patch_custo_mao_obra",
+        dados_novos=f'{{"horas":{data.horas_trabalhadas},"valor_hora":{data.valor_hora_tecnico},"custo_mao_obra":{os_obj.custo_mao_obra}}}')
+    return {"custo_mao_obra": os_obj.custo_mao_obra, "horas_trabalhadas": os_obj.horas_trabalhadas, "valor_hora_tecnico": os_obj.valor_hora_tecnico}
 
 # ========== PLANOS PREVENTIVOS ENDPOINTS ==========
 @api_router.get("/planos-preventivos", response_model=List[PlanoResponse])
@@ -4421,30 +4899,137 @@ async def relatorio_custos(
                 filtered.append(c)
         custos = filtered
 
-    total_geral = sum(c.valor * c.quantidade for c in custos)
+    # ── Ordens no período para custo mão de obra / parada ──────────────────────
+    os_q = db.query(OrdemServico).filter(OrdemServico.organization_id == user.organization_id)
+    if data_inicio:
+        try:
+            _dt0 = datetime.fromisoformat(data_inicio).replace(tzinfo=timezone.utc)
+            os_q = os_q.filter(OrdemServico.created_at >= _dt0)
+        except ValueError:
+            pass
+    if data_fim:
+        try:
+            _dt1 = datetime.fromisoformat(data_fim).replace(tzinfo=timezone.utc)
+            os_q = os_q.filter(OrdemServico.created_at <= _dt1)
+        except ValueError:
+            pass
+    ordens_periodo = os_q.all()
 
+    # Valor/hora por equipamento para custo de parada
+    eq_valor_hora_map = {str(e.id): (e.valor_hora or 0.0) for e in equips}
+
+    def _parada(o):
+        return round((o.tempo_total / 60) * eq_valor_hora_map.get(str(o.equipamento_id), 0), 2) if o.tempo_total else 0.0
+
+    # ── Totais globais ──────────────────────────────────────────────────────────
+    total_geral = sum(c.valor * c.quantidade for c in custos)
+    custo_mao_obra_total = round(sum(o.custo_mao_obra or 0 for o in ordens_periodo), 2)
+    custo_parada_total   = round(sum(_parada(o) for o in ordens_periodo), 2)
+    custo_total_completo = round(total_geral + custo_mao_obra_total + custo_parada_total, 2)
+
+    # ── por_tipo (materiais) ─────────────────────────────────────────────────
     por_tipo: dict = {}
     for c in custos:
         tipo = c.tipo.value
         por_tipo[tipo] = por_tipo.get(tipo, 0) + c.valor * c.quantidade
 
-    por_equipamento: dict = {}
+    # ── breakdown por tipo de OS ────────────────────────────────────────────
+    _bk_os: dict = {}
+    for o in ordens_periodo:
+        t = o.tipo.value
+        if t not in _bk_os:
+            _bk_os[t] = {"materiais": 0.0, "mao_obra": 0.0, "parada": 0.0}
+        _bk_os[t]["mao_obra"] += (o.custo_mao_obra or 0)
+        _bk_os[t]["parada"]   += _parada(o)
     for c in custos:
-        os = os_map.get(str(c.ordem_servico_id))
-        if os:
-            eq_nome = eq_map.get(str(os.equipamento_id), "Desconhecido")
-            por_equipamento[eq_nome] = por_equipamento.get(eq_nome, 0) + c.valor * c.quantidade
+        os_obj = os_map.get(str(c.ordem_servico_id))
+        if os_obj:
+            t = os_obj.tipo.value
+            if t not in _bk_os:
+                _bk_os[t] = {"materiais": 0.0, "mao_obra": 0.0, "parada": 0.0}
+            _bk_os[t]["materiais"] += c.valor * c.quantidade
+    breakdown_por_tipo_os = {
+        t: {"total": round(v["materiais"]+v["mao_obra"]+v["parada"], 2), "materiais": round(v["materiais"],2), "mao_obra": round(v["mao_obra"],2), "parada": round(v["parada"],2)}
+        for t, v in _bk_os.items()
+    }
 
-    por_equip_sorted = sorted(
-        [{"equipamento": k, "total": round(v, 2)} for k, v in por_equipamento.items()],
+    # ── breakdown por equipamento (top 5 com componentes) ───────────────────
+    _eq_bk: dict = {}
+    for o in ordens_periodo:
+        eq_nome = eq_map.get(str(o.equipamento_id), "Desconhecido")
+        if eq_nome not in _eq_bk:
+            _eq_bk[eq_nome] = {"materiais": 0.0, "mao_obra": 0.0, "parada": 0.0}
+        _eq_bk[eq_nome]["mao_obra"] += (o.custo_mao_obra or 0)
+        _eq_bk[eq_nome]["parada"]   += _parada(o)
+    for c in custos:
+        os_obj = os_map.get(str(c.ordem_servico_id))
+        if os_obj:
+            eq_nome = eq_map.get(str(os_obj.equipamento_id), "Desconhecido")
+            if eq_nome not in _eq_bk:
+                _eq_bk[eq_nome] = {"materiais": 0.0, "mao_obra": 0.0, "parada": 0.0}
+            _eq_bk[eq_nome]["materiais"] += c.valor * c.quantidade
+
+    por_equipamento_top5 = sorted([
+        {"equipamento": k, "custo_total": round(v["materiais"]+v["mao_obra"]+v["parada"],2),
+         "custo_materiais": round(v["materiais"],2), "custo_mao_obra": round(v["mao_obra"],2), "custo_parada": round(v["parada"],2)}
+        for k, v in _eq_bk.items()
+    ], key=lambda x: x["custo_total"], reverse=True)[:5]
+
+    # compatibilidade legada (total apenas) — mantido para não quebrar clientes
+    por_equipamento_legacy = sorted(
+        [{"equipamento": k, "total": round(v["materiais"]+v["mao_obra"]+v["parada"], 2)} for k, v in _eq_bk.items()],
         key=lambda x: x["total"], reverse=True
     )
 
+    # ── CAPEX / OPEX ─────────────────────────────────────────────────────────
+    # OPEX = corretivas (manutenção não planejada); CAPEX = preventivas + preditivas
+    _mat_corr = sum(c.valor * c.quantidade for c in custos
+                    if os_map.get(str(c.ordem_servico_id)) and os_map[str(c.ordem_servico_id)].tipo.value == "corretiva")
+    _mo_corr  = sum((o.custo_mao_obra or 0) for o in ordens_periodo if o.tipo.value == "corretiva")
+    _par_corr = sum(_parada(o) for o in ordens_periodo if o.tipo.value == "corretiva")
+    _mat_plan = sum(c.valor * c.quantidade for c in custos
+                    if os_map.get(str(c.ordem_servico_id)) and os_map[str(c.ordem_servico_id)].tipo.value in ("preventiva", "preditiva"))
+    _mo_plan  = sum((o.custo_mao_obra or 0) for o in ordens_periodo if o.tipo.value in ("preventiva", "preditiva"))
+    _par_plan = sum(_parada(o) for o in ordens_periodo if o.tipo.value in ("preventiva", "preditiva"))
+    capex_opex = {
+        "opex":  round(_mat_corr + _mo_corr + _par_corr, 2),
+        "capex": round(_mat_plan + _mo_plan + _par_plan, 2),
+    }
+
+    # ── Breakdown mensal (para gráfico de barras empilhadas) ─────────────────
+    from collections import defaultdict as _dd
+    _mes_bk: dict = _dd(lambda: {"materiais": 0.0, "mao_obra": 0.0, "parada": 0.0})
+    for o in ordens_periodo:
+        _mk = o.created_at.strftime("%Y-%m") if o.created_at else "—"
+        _mes_bk[_mk]["mao_obra"] += (o.custo_mao_obra or 0)
+        _mes_bk[_mk]["parada"]   += _parada(o)
+    for c in custos:
+        os_obj = os_map.get(str(c.ordem_servico_id))
+        if os_obj and os_obj.created_at:
+            _mk = os_obj.created_at.strftime("%Y-%m")
+            _mes_bk[_mk]["materiais"] += c.valor * c.quantidade
+    por_mes = sorted([
+        {"mes": k, "materiais": round(v["materiais"],2), "mao_obra": round(v["mao_obra"],2), "parada": round(v["parada"],2)}
+        for k, v in _mes_bk.items()
+    ], key=lambda x: x["mes"])
+
     return {
+        # ── Campos legados (não alterar) ──────────────────────────────────────
         "total_geral": round(total_geral, 2),
         "por_tipo": {k: round(v, 2) for k, v in por_tipo.items()},
-        "por_equipamento": por_equip_sorted,
+        "por_equipamento": por_equipamento_legacy,
         "total_registros": len(custos),
+        # ── Novos campos CAPEX/OPEX ───────────────────────────────────────────
+        "custos_periodo": {
+            "custo_materiais_total": round(total_geral, 2),
+            "custo_mao_obra_total": custo_mao_obra_total,
+            "custo_parada_total": custo_parada_total,
+            "custo_total": custo_total_completo,
+            "breakdown_por_tipo_os": breakdown_por_tipo_os,
+            "breakdown_por_equipamento": por_equipamento_top5,
+            "classificacao_capex_opex": capex_opex,
+            "por_mes": por_mes,
+        },
     }
 
 
