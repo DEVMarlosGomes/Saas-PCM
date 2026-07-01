@@ -7,6 +7,7 @@ import {
   Activity, Clock, Wrench, BarChart2, Timer,
   Loader2, RefreshCw, AlertTriangle, CheckCircle2,
 } from "lucide-react";
+import { HelpTooltip } from "../components/shared/HelpTooltip";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ const PRIO_LABEL = { critica: "Crítica", alta: "Alta", media: "Média", baixa: 
 
 // ─── KPI card ────────────────────────────────────────────────────────────────
 
-function KpiCard({ icon: Icon, label, value, sub, color = "#3B82F6", alert = false }) {
+function KpiCard({ icon: Icon, label, value, sub, color = "#3B82F6", alert = false, tooltip }) {
   return (
     <div style={{
       background: "#171717", border: `1px solid ${alert ? "rgba(239,68,68,0.3)" : "#262626"}`,
@@ -45,8 +46,9 @@ function KpiCard({ icon: Icon, label, value, sub, color = "#3B82F6", alert = fal
       borderTop: `2px solid ${alert ? "#EF4444" : color}`,
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 2 }}>
           {label}
+          {tooltip && <HelpTooltip text={tooltip} />}
         </span>
         <div style={{
           width: 32, height: 32, borderRadius: 4,
@@ -201,26 +203,31 @@ export default function DashboardOperadorPage() {
           value={`${disp.toFixed(1)}%`}
           sub={dispAlert ? "⚠ Abaixo de 85%" : "Equipamentos online"}
           alert={dispAlert}
+          tooltip="% do tempo em que os equipamentos do seu setor estavam operacionais no período."
         />
         <KpiCard
           icon={Wrench} label="MTTR" color="#F59E0B"
           value={fmtMin(data.mttr_minutos)}
           sub="Tempo médio de reparo"
+          tooltip="Mean Time To Repair — tempo médio entre início e fim do atendimento. Quanto menor, melhor."
         />
         <KpiCard
           icon={CheckCircle2} label="MTBF" color="#10B981"
           value={fmtHoras(data.mtbf_horas)}
           sub="Tempo médio entre falhas"
+          tooltip="Mean Time Between Failures — tempo médio que os equipamentos operam sem falhar. Quanto maior, mais confiáveis."
         />
         <KpiCard
           icon={BarChart2} label="OS do Mês" color="#3B82F6"
           value={data.os_mes ?? 0}
           sub="Ordens abertas este mês"
+          tooltip="Total de ordens de serviço abertas no mês corrente para o seu setor."
         />
         <KpiCard
           icon={Timer} label="T. Resposta" color="#8B5CF6"
           value={fmtMin(data.tempo_resposta_medio_min)}
           sub="Tempo médio de resposta"
+          tooltip="Tempo médio entre a abertura da OS e o início do atendimento pelo técnico."
         />
       </div>
 

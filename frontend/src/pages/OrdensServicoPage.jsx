@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import {
   getOrdensServico, createOrdemServico, updateOrdemServico, getEquipamentos,
   getCustos, createCusto, deleteCusto, getPendingReviews, autoApproveExpired, buscarPorCracha,
-  getOSEquipe, addOSEquipeMembro, removeOSEquipeMembro, getOSHistorico,
+  getOSEquipe, addOSEquipeMembro, removeOSEquipeMembro, getOSHistorico, lookupColaborador,
+  reassinarTecnico, getOSExceoesArea, addOSExcecaoArea, removeOSExcecaoArea,
 } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -19,8 +20,79 @@ import {
   Plus, Search, Wrench, Clock, AlertTriangle, CheckCircle,
   FileCheck, Filter, X, Loader2, TrendingDown, Shield,
   ArrowRight, Timer, Zap, Ban, UserCheck, UserX, Users,
-  Trash2, Activity, HardHat, ClipboardCheck,
+  Trash2, Activity, HardHat, ClipboardCheck, RefreshCw,
 } from "lucide-react";
+import { HelpTooltip } from "../components/shared/HelpTooltip";
+
+// ─── Áreas de manutenção ─────────────────────────────────────────────────────
+
+// Áreas de topo (top-level)
+const AREAS_MANUTENCAO = {
+  eletrica:   "Elétrica",
+  mecanica:   "Mecânica",
+  civil:      "Civil",
+  utilidades: "Utilidades",
+  predial:    "Predial",
+  geral:      "Geral (qualquer área)",
+};
+
+// Subáreas por área de topo
+const SUBAREAS_MANUTENCAO = {
+  eletrica: [
+    { value: "eletrica_predial",    label: "Elétrica Predial" },
+    { value: "energia_aterramento", label: "Energia / Aterramento" },
+    { value: "automacao_clp",       label: "Automação / CLP" },
+    { value: "instrumentacao",      label: "Instrumentação" },
+    { value: "motores",             label: "Motores" },
+    { value: "eletrica_industrial", label: "Elétrica Industrial" },
+    { value: "estrutura_eletrica",  label: "Estrutura Elétrica" },
+  ],
+  mecanica: [
+    { value: "mecanica_industrial", label: "Mecânica Industrial" },
+    { value: "maquinas",            label: "Máquinas" },
+    { value: "hidraulica",          label: "Hidráulica" },
+    { value: "pneumatica",          label: "Pneumática" },
+    { value: "lubrificacao",        label: "Lubrificação" },
+    { value: "solda_calderaria",    label: "Solda / Calderaria" },
+    { value: "usinagem_ajustagem",  label: "Usinagem / Ajustagem" },
+    { value: "frota",               label: "Frota" },
+  ],
+};
+
+// Map inverso: subárea → área de topo (para lookup)
+const SUBAREA_PARA_AREA = Object.entries(SUBAREAS_MANUTENCAO).reduce((acc, [area, subs]) => {
+  subs.forEach((s) => { acc[s.value] = area; });
+  return acc;
+}, {});
+
+// Label de subárea
+const SUBAREA_LABEL = Object.values(SUBAREAS_MANUTENCAO).flat().reduce((acc, s) => {
+  acc[s.value] = s.label;
+  return acc;
+}, {});
+
+// Keywords para verificação de compatibilidade de área (técnico vs. OS)
+// hidraulica, pneumatica, instrumentacao agora são subáreas de mecanica/eletrica
+const AREAS_KEYWORDS = {
+  eletrica:   ["eletric", "electr"],
+  mecanica:   ["mecanic", "mechan", "hidraul", "hydraul", "pneumat"],
+  civil:      ["civil"],
+  utilidades: ["utilidad"],
+  predial:    ["predial"],
+  geral:      [],
+};
+
+function stripAccents(s) {
+  return s.normalize("NFD").replace(/\p{Mn}/gu, "");
+}
+
+function areaCompativel(areaOs, setor, cargo) {
+  if (!areaOs || areaOs === "geral") return true;
+  const keywords = AREAS_KEYWORDS[areaOs] || [];
+  if (!keywords.length) return true;
+  const haystack = stripAccents(`${setor || ""} ${cargo || ""}`).toLowerCase();
+  return keywords.some((kw) => haystack.includes(stripAccents(kw).toLowerCase()));
+}
 
 // ─── Configurações ────────────────────────────────────────────────────────────
 
@@ -153,7 +225,11 @@ function SolicitanteSection({ cracha, onCrachaChange, nome, onNomeChange, status
     <div className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-3">
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Solicitante</p>
       <div className="flex gap-2">
-        <div className="flex-1 space-y-1"><Label htmlFor="sol-cracha" className="text-xs">Crachá / ID</Label>
+        <div className="flex-1 space-y-1">
+          <Label htmlFor="sol-cracha" className="text-xs flex items-center">
+            Crachá / ID
+            <HelpTooltip text="Número do crachá ou matrícula do operador que está abrindo a OS. Cadastre colaboradores na aba Funcionários para busca automática." side="right" />
+          </Label>
           <Input id="sol-cracha" value={cracha} onChange={(e) => onCrachaChange(e.target.value)} onKeyDown={hk} placeholder="Ex: 12345" className="rounded-lg h-9 text-sm" data-testid="sol-cracha-input" />
         </div>
         <div className="flex items-end">
@@ -275,7 +351,7 @@ export default function OrdensServicoPage() {
   const [bloqueioModal, setBloqueioModal] = useState(null);
 
   // Formulário nova OS
-  const FORM_RESET = { equipamento_id: "", tipo: "corretiva", prioridade: "media", descricao: "", falha_tipo: "", falha_modo: "", falha_causa: "", failure_group: "" };
+  const FORM_RESET = { equipamento_id: "", tipo: "corretiva", prioridade: "media", descricao: "", falha_tipo: "", falha_modo: "", falha_causa: "", failure_group: "", area_manutencao: "", subarea_manutencao: "" };
   const [formData, setFormData]     = useState(FORM_RESET);
   const [solCracha, setSolCracha]   = useState("");
   const [solNome, setSolNome]       = useState("");
@@ -311,8 +387,42 @@ export default function OrdensServicoPage() {
   const [relForm, setRelForm]           = useState({ o_que: "", analise: "" });
   const [submittingRelatorio, setSubmittingRelatorio] = useState(false);
 
+  // Modal de matrícula (Iniciar / Concluir OS)
+  const [showMatriculaModal, setShowMatriculaModal] = useState(false);
+  const [matriculaOS, setMatriculaOS]     = useState(null);
+  const [matriculaTarget, setMatriculaTarget] = useState(null);
+  const [matriculaInput, setMatriculaInput] = useState("");
+  const [matriculaBuscando, setMatriculaBuscando] = useState(false);
+  const [matriculaColaborador, setMatriculaColaborador] = useState(null);
+  const [matriculaConfirmada, setMatriculaConfirmada] = useState(null);
+  const [submittingMatricula, setSubmittingMatricula] = useState(false);
+
+  // Autorizações de área (excecoes_area) — seção no drawer
+  const [detailExcecoes, setDetailExcecoes] = useState([]);
+  const [loadingExcecoes, setLoadingExcecoes] = useState(false);
+  const [excecaoInput, setExcecaoInput] = useState("");
+  const [addingExcecao, setAddingExcecao] = useState(false);
+  const [removingExcecao, setRemovingExcecao] = useState(null);
+
+  // Modal de reassinalação (Trocar Técnico — admin/líder)
+  const [showReatribuirModal, setShowReatribuirModal] = useState(false);
+  const [reatribuirInput, setReatribuirInput]         = useState("");
+  const [reatribuirColaborador, setReatribuirColaborador] = useState(null);
+  const [reatribuirBuscando, setReatribuirBuscando]   = useState(false);
+  const [reatribuirMotivo, setReatribuirMotivo]       = useState("");
+  const [submittingReatribuir, setSubmittingReatribuir] = useState(false);
+
   const canEditOS    = user?.role === "admin" || user?.role === "lider" || user?.role === "tecnico" || GRUPO_MANUTENCAO.includes(user?.role);
   const canReviewOS  = user?.role === "admin" || user?.role === "lider";
+  // Líderes especializados também acessam revisão (filtrada pela área deles no backend)
+  const canSeeReviews = canReviewOS || user?.role === "lider_manutencao_eletrica" || user?.role === "lider_manutencao_mecanica";
+  const userCanReviewOS = (os) => {
+    if (!os) return false;
+    if (canReviewOS) return true;
+    if (user?.role === "lider_manutencao_eletrica") return os.area_manutencao === "eletrica";
+    if (user?.role === "lider_manutencao_mecanica") return os.area_manutencao === "mecanica";
+    return false;
+  };
   // Pode ver breakdown financeiro completo (materiais + mão de obra + parada)
   const podeCustoCompleto = user?.role === "admin" || GRUPO_MANUTENCAO.includes(user?.role);
 
@@ -326,7 +436,7 @@ export default function OrdensServicoPage() {
       const [osRes, eqRes] = await Promise.all([getOrdensServico(params), getEquipamentos()]);
       setOrdens(osRes.data || []);
       setEquipamentos(eqRes.data || []);
-      if (canReviewOS) {
+      if (canSeeReviews) {
         try { const pr = await getPendingReviews(); setPendingCount(pr.data?.length || 0); } catch { setPendingCount(0); }
       }
     } catch { toast.error("Erro ao carregar ordens de serviço"); }
@@ -380,7 +490,8 @@ export default function OrdensServicoPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.equipamento_id || !formData.descricao) { toast.error("Preencha equipamento e descrição"); return; }
+    if (!formData.equipamento_id) { toast.error("Selecione o equipamento"); return; }
+    if (formData.descricao.trim().length < 35) { toast.error("Descrição deve ter no mínimo 35 caracteres"); return; }
     if (!formData.failure_group) { toast.error("Selecione o grupo de falha"); return; }
     if (!solNome.trim()) { toast.error("Informe o nome do solicitante"); return; }
     setCreating(true);
@@ -395,14 +506,142 @@ export default function OrdensServicoPage() {
     } finally { setCreating(false); }
   };
 
-  // ─── Mudança de status (com interceptação para relatório) ──────────────────
-  const handleStatusChange = async (os, newStatus) => {
-    // Intercepta transição "Concluir" para exibir modal de relatório
-    if (newStatus === "aguardando_revisao" && os.status === "em_atendimento") {
-      setRelatorioOS(os);
-      setRelatorioTargetStatus(newStatus);
+  // ─── Abre modal de matrícula antes de transições críticas ────────────────
+  const abrirModalMatricula = (os, newStatus) => {
+    setMatriculaOS(os);
+    setMatriculaTarget(newStatus);
+    setMatriculaInput("");
+    setMatriculaColaborador(null);
+    setMatriculaConfirmada(null);
+    setShowMatriculaModal(true);
+  };
+
+  // ─── Lookup de colaborador pelo input de matrícula ────────────────────────
+  const handleLookupMatricula = async () => {
+    if (!matriculaInput.trim()) return;
+    setMatriculaBuscando(true);
+    setMatriculaColaborador(null);
+    try {
+      const res = await lookupColaborador(matriculaInput.trim());
+      setMatriculaColaborador(res.data);
+      if (!res.data.encontrado) toast.warning("Matrícula não encontrada no cadastro de colaboradores");
+    } catch {
+      toast.error("Erro ao buscar matrícula");
+    } finally {
+      setMatriculaBuscando(false);
+    }
+  };
+
+  // ─── Confirmar matrícula e prosseguir com a transição ─────────────────────
+  const handleConfirmarMatricula = async () => {
+    if (!matriculaColaborador?.encontrado) { toast.error("Confirme uma matrícula válida antes de prosseguir"); return; }
+    setMatriculaConfirmada(matriculaInput.trim());
+    setShowMatriculaModal(false);
+
+    if (matriculaTarget === "aguardando_revisao") {
+      // Vai para o modal de relatório com a matrícula já capturada
+      setRelatorioOS(matriculaOS);
+      setRelatorioTargetStatus(matriculaTarget);
       setRelForm({ o_que: "", analise: "" });
       setShowRelatorioModal(true);
+    } else {
+      // Transição direta (ex: em_atendimento)
+      setSubmittingMatricula(true);
+      try {
+        await updateOrdemServico(matriculaOS.id, {
+          status: matriculaTarget,
+          matricula_tecnico: matriculaInput.trim(),
+          area_tecnico: matriculaColaborador?.setor || matriculaColaborador?.cargo || null,
+        });
+        toast.success("OS aceita — técnico identificado!");
+        setMatriculaConfirmada(null);
+        loadData();
+        if (detailOS?.id === matriculaOS.id) viewOSDetail(matriculaOS.id);
+      } catch { toast.error("Erro ao atualizar status"); }
+      finally { setSubmittingMatricula(false); }
+    }
+  };
+
+  // ─── Busca colaborador para reassinalação ────────────────────────────────
+  const handleBuscarReatribuir = async () => {
+    if (!reatribuirInput.trim()) return;
+    setReatribuirBuscando(true);
+    setReatribuirColaborador(null);
+    try {
+      const res = await lookupColaborador(reatribuirInput.trim());
+      setReatribuirColaborador(res.data);
+      if (!res.data.encontrado) toast.warning("Matrícula não encontrada no cadastro de colaboradores");
+    } catch {
+      toast.error("Erro ao buscar matrícula");
+    } finally {
+      setReatribuirBuscando(false);
+    }
+  };
+
+  // ─── Confirmar reassinalação de técnico ──────────────────────────────────
+  const handleConfirmarReatribuir = async () => {
+    if (!reatribuirColaborador?.encontrado) { toast.error("Confirme uma matrícula válida"); return; }
+    setSubmittingReatribuir(true);
+    try {
+      await reassinarTecnico(detailOS.id, {
+        nova_matricula: reatribuirInput.trim(),
+        motivo: reatribuirMotivo.trim() || null,
+      });
+      toast.success("Técnico reatribuído com sucesso!");
+      setShowReatribuirModal(false);
+      setReatribuirInput("");
+      setReatribuirColaborador(null);
+      setReatribuirMotivo("");
+      loadData();
+      viewOSDetail(detailOS.id);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Erro ao reatribuir técnico");
+    } finally {
+      setSubmittingReatribuir(false);
+    }
+  };
+
+  // ─── Autorizações de área ─────────────────────────────────────────────────
+  const handleAddExcecao = async () => {
+    if (!excecaoInput.trim()) return;
+    setAddingExcecao(true);
+    try {
+      await addOSExcecaoArea(detailOS.id, excecaoInput.trim());
+      toast.success("Crachá autorizado!");
+      setExcecaoInput("");
+      const [excRes] = await Promise.all([getOSExceoesArea(detailOS.id)]);
+      setDetailExcecoes(excRes.data || []);
+      loadData();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Erro ao autorizar crachá");
+    } finally {
+      setAddingExcecao(false);
+    }
+  };
+
+  const handleRemoveExcecao = async (matricula) => {
+    setRemovingExcecao(matricula);
+    try {
+      await removeOSExcecaoArea(detailOS.id, matricula);
+      toast.success("Autorização removida");
+      const excRes = await getOSExceoesArea(detailOS.id);
+      setDetailExcecoes(excRes.data || []);
+      loadData();
+    } catch {
+      toast.error("Erro ao remover autorização");
+    } finally {
+      setRemovingExcecao(null);
+    }
+  };
+
+  // ─── Mudança de status (com interceptação para matrícula + relatório) ─────
+  const handleStatusChange = async (os, newStatus) => {
+    // Transições que exigem identificação do técnico
+    if (
+      (newStatus === "em_atendimento" && os.status === "aberta") ||
+      (newStatus === "aguardando_revisao" && os.status === "em_atendimento")
+    ) {
+      abrirModalMatricula(os, newStatus);
       return;
     }
     try {
@@ -424,9 +663,11 @@ export default function OrdensServicoPage() {
         status: relatorioTargetStatus,
         relatorio_o_que_foi_realizado: relForm.o_que.trim(),
         relatorio_analise_problema: relForm.analise.trim(),
+        ...(matriculaConfirmada ? { matricula_tecnico: matriculaConfirmada } : {}),
       });
       toast.success("OS concluída com sucesso!");
       setShowRelatorioModal(false);
+      setMatriculaConfirmada(null);
       loadData();
       if (detailOS?.id === relatorioOS.id) viewOSDetail(relatorioOS.id);
     } catch (error) {
@@ -463,6 +704,13 @@ export default function OrdensServicoPage() {
       try { const eq = await getOSEquipe(osId); setDetailEquipe(eq.data || []); } catch { setDetailEquipe([]); }
       finally { setLoadingEquipe(false); }
     } else { setDetailEquipe([]); }
+
+    // Excecoes de área (revisores de área)
+    if (canSeeReviews) {
+      setLoadingExcecoes(true);
+      try { const excRes = await getOSExceoesArea(osId); setDetailExcecoes(excRes.data || []); } catch { setDetailExcecoes([]); }
+      finally { setLoadingExcecoes(false); }
+    }
   };
 
   // ─── Equipe ───────────────────────────────────────────────────────────────
@@ -523,8 +771,8 @@ export default function OrdensServicoPage() {
     if (os.status === "aberta"             && !canEditOS)   return null;
     if (os.status === "em_atendimento"     && !canEditOS)   return null;
     if (os.status === "aguardando_peca"    && !canEditOS)   return null;
-    if (os.status === "aguardando_revisao" && !canReviewOS) return null;
-    if (os.status === "revisada"           && !canReviewOS) return null;
+    if (os.status === "aguardando_revisao" && !userCanReviewOS(os)) return null;
+    if (os.status === "revisada"           && !userCanReviewOS(os)) return null;
     return cfg;
   };
 
@@ -537,7 +785,7 @@ export default function OrdensServicoPage() {
           <p className="text-muted-foreground text-sm mt-1">{ordens.length} ordens encontradas</p>
         </div>
         <div className="flex gap-2">
-          {canReviewOS && pendingCount > 0 && (
+          {canSeeReviews && pendingCount > 0 && (
             <Button variant="outline" size="sm" className="rounded-lg h-10 border-amber-500/30 text-amber-500 hover:bg-amber-500/10" onClick={handleAutoApprove}>
               <Clock className="h-4 w-4 mr-2" />Auto-aprovar ({pendingCount})
             </Button>
@@ -551,7 +799,7 @@ export default function OrdensServicoPage() {
       </div>
 
       {/* Pending Reviews Banner */}
-      {canReviewOS && pendingCount > 0 && (
+      {canSeeReviews && pendingCount > 0 && (
         <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-amber-500/8 border border-amber-500/15">
           <div className="flex items-center gap-2.5"><Shield className="h-5 w-5 text-amber-500" /><span className="text-sm font-medium text-amber-600 dark:text-amber-400">{pendingCount} OS aguardando sua revisão (SLA: 24h)</span></div>
           <Button size="sm" variant="outline" className="rounded-lg h-8 border-amber-500/30 text-amber-500" onClick={() => setFilterStatus("aguardando_revisao")}>Ver pendentes</Button>
@@ -655,12 +903,33 @@ export default function OrdensServicoPage() {
                 </div>
               ); })()}
 
+              {/* Trocar Técnico — admin/lider */}
+              {canReviewOS && ["aberta", "em_atendimento", "aguardando_peca"].includes(detailOS.status) && (
+                <Button
+                  variant="outline"
+                  className="w-full h-9 rounded-xl text-sm font-medium border-amber-500/30 text-amber-500 hover:bg-amber-500/10 hover:border-amber-500/50"
+                  onClick={() => {
+                    setReatribuirInput("");
+                    setReatribuirColaborador(null);
+                    setReatribuirMotivo("");
+                    setShowReatribuirModal(true);
+                  }}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Trocar Técnico Responsável
+                </Button>
+              )}
+
               {/* Info Grid */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3 rounded-xl bg-muted/30"><p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Equipamento</p><p className="text-sm font-medium mt-1 truncate">{getEquipamentoNome(detailOS.equipamento_id)}</p></div>
                 <div className="p-3 rounded-xl bg-muted/30"><p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Tipo</p><Badge className={`${tipoConfig[detailOS.tipo]?.color} text-xs border rounded mt-1`}>{tipoConfig[detailOS.tipo]?.label}</Badge></div>
                 <div className="p-3 rounded-xl bg-muted/30"><p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Prioridade</p><Badge className={`${prioridadeConfig[detailOS.prioridade]?.color} text-xs border rounded mt-1`}>{prioridadeConfig[detailOS.prioridade]?.label}</Badge></div>
-                <div className="p-3 rounded-xl bg-muted/30"><p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">SLA</p>
+                <div className="p-3 rounded-xl bg-muted/30">
+                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider flex items-center">
+                    SLA
+                    <HelpTooltip text="Service Level Agreement — prazo máximo acordado para resolução da OS. 'Fora' indica que o tempo foi excedido." side="top" />
+                  </p>
                   <Badge className={`text-xs border rounded mt-1 ${detailOS.dentro_sla ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : "bg-red-500/10 text-red-500 border-red-500/20"}`}>{detailOS.dentro_sla ? "✅ Dentro" : "❌ Fora"}</Badge>
                 </div>
               </div>
@@ -834,6 +1103,87 @@ export default function OrdensServicoPage() {
                 </div>
               </div>
 
+              {/* ── Área de manutenção + autorizações (revisores) ─────────────── */}
+              {canSeeReviews && (
+                <div className="rounded-xl border border-border/50 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30 border-b border-border/50">
+                    <div className="flex items-center gap-2">
+                      <HardHat className="h-3.5 w-3.5 text-primary" />
+                      <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">Área de manutenção</p>
+                    </div>
+                    {detailOS.area_manutencao && (
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary/10 text-primary">
+                        {AREAS_MANUTENCAO[detailOS.area_manutencao] || detailOS.area_manutencao}
+                        {detailOS.subarea_manutencao && SUBAREA_LABEL[detailOS.subarea_manutencao] && (
+                          <span className="text-primary/60 font-normal"> › {SUBAREA_LABEL[detailOS.subarea_manutencao]}</span>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  <div className="px-4 py-4 space-y-3">
+                    {!detailOS.area_manutencao && (
+                      <p className="text-xs text-muted-foreground italic">Sem restrição de área — qualquer técnico pode atender.</p>
+                    )}
+                    {/* Lista de exceções */}
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider mb-2">
+                        Crachás autorizados fora da área
+                      </p>
+                      {loadingExcecoes ? (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando...
+                        </div>
+                      ) : detailExcecoes.length === 0 ? (
+                        <p className="text-xs text-muted-foreground italic">Nenhuma autorização adicional.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {detailExcecoes.map((exc) => (
+                            <div key={exc.matricula} className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/30 border border-border/50">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold truncate">{exc.colaborador_nome || exc.matricula}</p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  Mat. <span className="font-mono">{exc.matricula}</span>
+                                  {exc.autorizado_por_nome && ` · Autorizado por ${exc.autorizado_por_nome}`}
+                                </p>
+                              </div>
+                              <button
+                                className="p-1.5 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors shrink-0"
+                                onClick={() => handleRemoveExcecao(exc.matricula)}
+                                disabled={removingExcecao === exc.matricula}
+                                title="Remover autorização"
+                              >
+                                {removingExcecao === exc.matricula ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {/* Adicionar novo crachá autorizado — apenas admin/lider */}
+                    {canReviewOS && (
+                      <div className="flex gap-2 pt-1">
+                        <Input
+                          placeholder="Matrícula do técnico a autorizar"
+                          value={excecaoInput}
+                          onChange={(e) => setExcecaoInput(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && handleAddExcecao()}
+                          className="font-mono text-sm h-8 flex-1"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 px-3 shrink-0"
+                          disabled={!excecaoInput.trim() || addingExcecao}
+                          onClick={handleAddExcecao}
+                        >
+                          {addingExcecao ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* ── Relatório do técnico executor (após timeline, antes dos tempos) ── */}
               {detailOS.relatorio_o_que_foi_realizado && (
                 <div className="rounded-xl border border-border/50 overflow-hidden">
@@ -998,6 +1348,134 @@ export default function OrdensServicoPage() {
         </div>
       )}
 
+      {/* ===== Modal Identificação do Técnico (Matrícula) ===== */}
+      {showMatriculaModal && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowMatriculaModal(false)}>
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm shadow-2xl animate-slide-in-bottom" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                <UserCheck className="h-5 w-5 text-emerald-500" />
+              </div>
+              <div>
+                <h3 className="font-heading font-bold text-base">
+                  {matriculaTarget === "em_atendimento" ? "Aceitar Ordem de Serviço" : "Confirmar Conclusão"}
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  {matriculaTarget === "em_atendimento" ? "Identifique-se para iniciar o atendimento" : "Identifique-se para registrar a conclusão"}
+                </p>
+              </div>
+            </div>
+
+            {/* Resumo da OS */}
+            {matriculaOS && (
+              <div className="mb-4 rounded-lg border border-border/60 bg-muted/20 p-3">
+                <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider mb-1">OS #{matriculaOS.numero}</p>
+                <p className="text-sm font-semibold leading-snug">
+                  {matriculaOS.equipamento_nome || getEquipamentoNome(matriculaOS.equipamento_id)}
+                </p>
+                {matriculaOS.descricao && (
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{matriculaOS.descricao}</p>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <Label className="text-xs font-semibold text-muted-foreground">Matrícula / Registro</Label>
+                <div className="flex gap-2 mt-1">
+                  <Input
+                    placeholder="Ex: TEC-001 ou 12345"
+                    value={matriculaInput}
+                    onChange={(e) => { setMatriculaInput(e.target.value); setMatriculaColaborador(null); }}
+                    onKeyDown={(e) => e.key === "Enter" && handleLookupMatricula()}
+                    className="font-mono flex-1"
+                    autoFocus
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 px-3"
+                    disabled={!matriculaInput.trim() || matriculaBuscando}
+                    onClick={handleLookupMatricula}
+                  >
+                    {matriculaBuscando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              {matriculaColaborador && (() => {
+                const areaOs = matriculaTarget === "em_atendimento" ? matriculaOS?.area_manutencao : null;
+                const naturalOk = areaCompativel(areaOs, matriculaColaborador?.setor, matriculaColaborador?.cargo);
+                const isExcecao = (matriculaOS?.excecoes_area_matriculas || []).includes(matriculaInput.trim());
+                const showAreaWarn = matriculaColaborador.encontrado && !!areaOs && areaOs !== "geral" && !naturalOk;
+                const areaOk = !showAreaWarn || isExcecao;
+                return (
+                  <div className="space-y-2">
+                    <div className={`rounded-lg p-3 border ${matriculaColaborador.encontrado
+                      ? areaOk ? "bg-emerald-500/10 border-emerald-500/20" : "bg-amber-500/10 border-amber-500/20"
+                      : "bg-red-500/10 border-red-500/20 text-red-400 text-sm"
+                    }`}>
+                      {matriculaColaborador.encontrado ? (
+                        <div>
+                          <p className={`font-bold text-base ${areaOk ? "text-emerald-400" : "text-amber-400"}`}>
+                            {matriculaColaborador.nome}
+                          </p>
+                          {(matriculaColaborador.cargo || matriculaColaborador.setor) && (
+                            <p className={`text-xs mt-0.5 ${areaOk ? "text-emerald-500/80" : "text-amber-500/80"}`}>
+                              {[matriculaColaborador.cargo, matriculaColaborador.setor].filter(Boolean).join(" · ")}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <p>Matrícula não encontrada. Verifique o cadastro de colaboradores.</p>
+                      )}
+                    </div>
+                    {showAreaWarn && !isExcecao && (
+                      <div className="rounded-lg p-3 border border-amber-500/20 bg-amber-500/5 text-xs text-amber-400 space-y-1">
+                        <p className="font-semibold">⚠ Área incompatível — acesso bloqueado</p>
+                        <p>Esta OS requer manutenção <strong>{AREAS_MANUTENCAO[areaOs] || areaOs}</strong>. Área registrada do técnico: <strong>{matriculaColaborador.setor || matriculaColaborador.cargo || "não definida"}</strong>.</p>
+                        <p className="text-amber-500/70">Solicite ao líder técnico ou admin para adicionar seu crachá nas autorizações desta OS.</p>
+                      </div>
+                    )}
+                    {showAreaWarn && isExcecao && (
+                      <div className="rounded-lg p-3 border border-emerald-500/20 bg-emerald-500/5 text-xs text-emerald-400">
+                        ✓ Liberado pelo líder/admin para atender esta OS fora da área habitual
+                      </div>
+                    )}
+
+                    <div className="flex gap-3 pt-1">
+                      <Button type="button" variant="outline" className="flex-1" onClick={() => setShowMatriculaModal(false)}>
+                        Cancelar
+                      </Button>
+                      <Button
+                        className="flex-1"
+                        disabled={!matriculaColaborador?.encontrado || submittingMatricula || !areaOk}
+                        onClick={handleConfirmarMatricula}
+                      >
+                        {submittingMatricula && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        {matriculaTarget === "em_atendimento" ? "Aceitar e Iniciar OS" : "Confirmar Conclusão"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {!matriculaColaborador && (
+                <div className="flex gap-3 pt-1">
+                  <Button type="button" variant="outline" className="flex-1" onClick={() => setShowMatriculaModal(false)}>
+                    Cancelar
+                  </Button>
+                  <Button className="flex-1" disabled onClick={handleConfirmarMatricula}>
+                    {matriculaTarget === "em_atendimento" ? "Aceitar e Iniciar OS" : "Confirmar Conclusão"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===== Modal Relatório de Execução ===== */}
       {showRelatorioModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowRelatorioModal(false)}>
@@ -1065,22 +1543,99 @@ export default function OrdensServicoPage() {
                 </Select>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>Tipo</Label>
+                <div className="space-y-2">
+                  <Label className="flex items-center">
+                    Tipo
+                    <HelpTooltip text="Corretiva: falha já ocorreu. Preventiva: manutenção agendada para prevenir falhas. Preditiva: baseada em monitoramento de condição." />
+                  </Label>
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(tipoConfig).filter(([k]) => tiposPermitidos.includes(k)).map(([k, v]) => (<button key={k} type="button" data-testid={`os-tipo-${k}`} className={`text-xs px-3 py-2 rounded-lg border transition-all font-medium ${formData.tipo === k ? "bg-primary text-primary-foreground border-primary" : "border-border bg-muted/50 hover:bg-muted"}`} onClick={() => setFormData({ ...formData, tipo: k })}>{v.label}</button>))}
                   </div>
                 </div>
-                <div className="space-y-2"><Label>Prioridade</Label>
+                <div className="space-y-2">
+                  <Label className="flex items-center">
+                    Prioridade
+                    <HelpTooltip text="Crítica: parada total de produção. Alta: risco iminente. Média: degradação de desempenho. Baixa: sem impacto imediato." />
+                  </Label>
                   <div className="grid grid-cols-2 gap-1.5">
                     {Object.entries(prioridadeConfig).map(([k, v]) => (<button key={k} type="button" className={`text-xs px-2 py-2 rounded-lg border transition-all font-medium ${formData.prioridade === k ? "bg-primary text-primary-foreground border-primary" : "border-border bg-muted/50 hover:bg-muted"}`} onClick={() => setFormData({ ...formData, prioridade: k })}>{v.label}</button>))}
                   </div>
                 </div>
               </div>
-              <div className="space-y-2"><Label>Descrição *</Label><Textarea value={formData.descricao} onChange={(e) => setFormData({ ...formData, descricao: e.target.value })} placeholder="Descreva o problema ou serviço" className="rounded-lg" rows={3} data-testid="os-descricao-input" /></div>
-              <div className="space-y-2"><Label>Grupo de Falha *{" "}{!formData.failure_group && <span className="text-destructive text-xs font-normal">(obrigatório)</span>}</Label>
+              <div className="space-y-2">
+                <Label className="flex items-center">
+                  Descrição *
+                  <HelpTooltip text="Descreva o problema ou serviço com clareza suficiente para o técnico entender a ocorrência sem precisar perguntar. Mínimo 35, máximo 500 caracteres." />
+                </Label>
+                <Textarea
+                  value={formData.descricao}
+                  onChange={(e) => setFormData({ ...formData, descricao: e.target.value.slice(0, 500) })}
+                  placeholder="Descreva o problema ou serviço com detalhes: local, sintoma observado, quando ocorreu..."
+                  className="rounded-lg"
+                  rows={3}
+                  maxLength={500}
+                  data-testid="os-descricao-input"
+                />
+                <p className={`text-[11px] flex justify-between ${formData.descricao.length < 35 ? "text-destructive" : "text-muted-foreground"}`}>
+                  <span>{formData.descricao.length < 35 ? `Faltam ${35 - formData.descricao.length} para o mínimo` : "✓ Mínimo atingido"}</span>
+                  <span>{formData.descricao.length} / 500</span>
+                </p>
+              </div>
+              <div className="space-y-2"><Label className="flex items-center">Grupo de Falha *{" "}{!formData.failure_group && <span className="text-destructive text-xs font-normal ml-1">(obrigatório)</span>}<HelpTooltip text="Classifica a natureza da falha para evitar que duas OS do mesmo grupo coexistam no mesmo equipamento. Usado em análises de confiabilidade." /></Label>
                 <div className="flex flex-wrap gap-2" data-testid="failure-group-chips">
                   {FAILURE_GROUPS.map((fg) => (<button key={fg.value} type="button" data-testid={`fg-chip-${fg.value}`} style={formData.failure_group === fg.value ? { background: `${fg.color}22`, borderColor: fg.color, color: fg.color } : {}} className={`text-xs px-3 py-1.5 rounded-lg border transition-all font-semibold ${formData.failure_group === fg.value ? "" : "border-border bg-muted/50 hover:bg-muted text-foreground"}`} onClick={() => setFormData({ ...formData, failure_group: fg.value })}>{fg.label}</button>))}
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="flex items-center text-xs font-semibold">
+                  Área de manutenção
+                  <HelpTooltip text="Define qual área técnica deve resolver esta OS. Técnicos de outras áreas serão bloqueados ao tentar aceitar, salvo autorização do líder ou admin." />
+                  <span className="text-muted-foreground font-normal ml-1">(opcional)</span>
+                </Label>
+                {/* Passo 1 — área de topo */}
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(AREAS_MANUTENCAO).map(([k, v]) => (
+                    <button
+                      key={k}
+                      type="button"
+                      className={`text-xs px-3 py-1.5 rounded-lg border transition-all font-medium ${formData.area_manutencao === k
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "border-border bg-muted/50 hover:bg-muted text-foreground"}`}
+                      onClick={() => setFormData({
+                        ...formData,
+                        area_manutencao: formData.area_manutencao === k ? "" : k,
+                        subarea_manutencao: "",
+                      })}
+                    >
+                      {v}
+                    </button>
+                  ))}
+                </div>
+                {/* Passo 2 — subárea (apenas se área selecionada tiver subáreas) */}
+                {formData.area_manutencao && SUBAREAS_MANUTENCAO[formData.area_manutencao] && (
+                  <div className="pl-3 border-l-2 border-primary/30 mt-1">
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider mb-1.5">
+                      Subárea de {AREAS_MANUTENCAO[formData.area_manutencao]}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SUBAREAS_MANUTENCAO[formData.area_manutencao].map((s) => (
+                        <button
+                          key={s.value}
+                          type="button"
+                          className={`text-xs px-3 py-1.5 rounded-lg border transition-all font-medium ${formData.subarea_manutencao === s.value
+                            ? "bg-primary/80 text-primary-foreground border-primary/80"
+                            : "border-border bg-muted/30 hover:bg-muted text-foreground"}`}
+                          onClick={() => setFormData({
+                            ...formData,
+                            subarea_manutencao: formData.subarea_manutencao === s.value ? "" : s.value,
+                          })}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               {formData.tipo === "corretiva" && (
                 <div className="grid grid-cols-3 gap-2">
@@ -1154,6 +1709,97 @@ export default function OrdensServicoPage() {
               <Button variant="destructive" className="flex-1 rounded-lg h-9" onClick={handleDeleteCusto} disabled={!!deletingCustoId}>
                 {deletingCustoId ? <Loader2 className="h-4 w-4 animate-spin" /> : "Remover"}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal Reassinalação de Técnico ===== */}
+      {showReatribuirModal && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setShowReatribuirModal(false)}>
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm shadow-2xl animate-slide-in-bottom" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                <RefreshCw className="h-5 w-5 text-amber-500" />
+              </div>
+              <div>
+                <h3 className="font-heading font-bold text-base">Trocar Técnico Responsável</h3>
+                <p className="text-xs text-muted-foreground">
+                  OS #{detailOS?.numero} · {detailOS && (detailOS.equipamento_nome || getEquipamentoNome(detailOS.equipamento_id))}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <Label className="text-xs font-semibold text-muted-foreground">Matrícula do novo técnico</Label>
+                <div className="flex gap-2 mt-1">
+                  <Input
+                    placeholder="Ex: TEC-001 ou 12345"
+                    value={reatribuirInput}
+                    onChange={(e) => { setReatribuirInput(e.target.value); setReatribuirColaborador(null); }}
+                    onKeyDown={(e) => e.key === "Enter" && handleBuscarReatribuir()}
+                    className="font-mono flex-1"
+                    autoFocus
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 px-3"
+                    disabled={!reatribuirInput.trim() || reatribuirBuscando}
+                    onClick={handleBuscarReatribuir}
+                  >
+                    {reatribuirBuscando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  </Button>
+                </div>
+              </div>
+
+              {reatribuirColaborador && (
+                <div className={`rounded-lg p-3 border ${reatribuirColaborador.encontrado
+                  ? "bg-emerald-500/10 border-emerald-500/20"
+                  : "bg-red-500/10 border-red-500/20 text-red-400 text-sm"
+                }`}>
+                  {reatribuirColaborador.encontrado ? (
+                    <div>
+                      <p className="font-bold text-base text-emerald-400">{reatribuirColaborador.nome}</p>
+                      {(reatribuirColaborador.cargo || reatribuirColaborador.setor) && (
+                        <p className="text-xs text-emerald-500/80 mt-0.5">
+                          {[reatribuirColaborador.cargo, reatribuirColaborador.setor].filter(Boolean).join(" · ")}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p>Matrícula não encontrada. Verifique o cadastro de colaboradores.</p>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <Label className="text-xs font-semibold text-muted-foreground">
+                  Motivo da troca <span className="font-normal text-muted-foreground/60">(opcional)</span>
+                </Label>
+                <Input
+                  className="mt-1 text-sm"
+                  placeholder="Ex: categoria de manutenção incorreta"
+                  value={reatribuirMotivo}
+                  onChange={(e) => setReatribuirMotivo(e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setShowReatribuirModal(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  className="flex-1"
+                  disabled={!reatribuirColaborador?.encontrado || submittingReatribuir}
+                  onClick={handleConfirmarReatribuir}
+                >
+                  {submittingReatribuir && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Confirmar Troca
+                </Button>
+              </div>
             </div>
           </div>
         </div>

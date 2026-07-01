@@ -121,6 +121,10 @@ export const getOrdensServico = (params) => api.get('/ordens-servico', { params 
 export const getOrdemServico = (id) => api.get(`/ordens-servico/${id}`);
 export const createOrdemServico = (data) => api.post('/ordens-servico', data);
 export const updateOrdemServico = (id, data) => api.put(`/ordens-servico/${id}`, data);
+export const reassinarTecnico = (osId, data) => api.patch(`/ordens-servico/${osId}/reassinar`, data);
+export const getOSExceoesArea = (osId) => api.get(`/ordens-servico/${osId}/excecoes-area`);
+export const addOSExcecaoArea = (osId, matricula) => api.post(`/ordens-servico/${osId}/excecoes-area`, { matricula });
+export const removeOSExcecaoArea = (osId, matricula) => api.delete(`/ordens-servico/${osId}/excecoes-area/${encodeURIComponent(matricula)}`);
 
 // ─── Custos ───────────────────────────────────────────────
 export const getCustos = (params) => api.get('/custos', { params });
@@ -146,6 +150,13 @@ export const updateUser = (id, data) => api.put(`/users/${id}`, data);
 export const deleteUser = (id) => api.delete(`/users/${id}`);
 export const buscarPorCracha = (cracha) => api.get('/users/buscar-por-cracha', { params: { cracha } });
 
+// ─── Colaboradores ────────────────────────────────────────
+export const getColaboradores = () => api.get('/colaboradores');
+export const createColaborador = (data) => api.post('/colaboradores', data);
+export const updateColaborador = (id, data) => api.put(`/colaboradores/${id}`, data);
+export const deleteColaborador = (id) => api.delete(`/colaboradores/${id}`);
+export const lookupColaborador = (matricula) => api.get('/colaboradores/lookup', { params: { matricula } });
+
 // ─── Organização ──────────────────────────────────────────
 export const getOrganization = () => api.get('/organization');
 export const updateOrganization = (data) => api.put('/organization', data);
@@ -154,6 +165,7 @@ export const revokeApiKey = () => api.delete('/organization/api-key');
 
 // ─── Auditoria ────────────────────────────────────────────
 export const getAuditoria = (params) => api.get('/auditoria', { params });
+export const getOSAuditDossier = (os_id) => api.get(`/auditoria/os/${os_id}`);
 
 // ─── Billing ─────────────────────────────────────────────
 export const getBillingPlan = () => api.get('/billing/plan');

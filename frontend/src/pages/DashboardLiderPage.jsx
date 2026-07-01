@@ -10,6 +10,7 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LabelList,
 } from "recharts";
+import { HelpTooltip } from "../components/shared/HelpTooltip";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ const PRIO_COLOR = { critica: "#EF4444", alta: "#F97316", media: "#EAB308", baix
 
 // ─── KPI card ────────────────────────────────────────────────────────────────
 
-function KpiCard({ icon: Icon, label, value, sub, color = "#3B82F6" }) {
+function KpiCard({ icon: Icon, label, value, sub, color = "#3B82F6", tooltip }) {
   return (
     <div style={{
       background: "#171717", border: "1px solid #262626",
@@ -52,8 +53,9 @@ function KpiCard({ icon: Icon, label, value, sub, color = "#3B82F6" }) {
       borderTop: `2px solid ${color}`,
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: 2 }}>
           {label}
+          {tooltip && <HelpTooltip text={tooltip} />}
         </span>
         <div style={{
           width: 28, height: 28, borderRadius: 4,
@@ -168,17 +170,23 @@ export default function DashboardLiderPage() {
       {/* 6 KPI cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
         <KpiCard icon={Activity} label="Disponibilidade" color="#10B981"
-          value={`${(data.disponibilidade_percent ?? 0).toFixed(1)}%`} sub="Uptime dos equipamentos" />
+          value={`${(data.disponibilidade_percent ?? 0).toFixed(1)}%`} sub="Uptime dos equipamentos"
+          tooltip="% do tempo em que os equipamentos estavam operacionais. Meta ideal: acima de 95%." />
         <KpiCard icon={Wrench} label="MTTR" color="#F59E0B"
-          value={fmtMin(data.mttr_minutos)} sub="Tempo médio de reparo" />
+          value={fmtMin(data.mttr_minutos)} sub="Tempo médio de reparo"
+          tooltip="Mean Time To Repair — tempo médio entre o início do atendimento e a conclusão do reparo. Quanto menor, melhor a eficiência da equipe." />
         <KpiCard icon={Clock} label="MTBF" color="#3B82F6"
-          value={fmtHoras(data.mtbf_horas)} sub="Tempo médio entre falhas" />
+          value={fmtHoras(data.mtbf_horas)} sub="Tempo médio entre falhas"
+          tooltip="Mean Time Between Failures — tempo médio entre falhas do mesmo equipamento. Quanto maior, mais confiável é o ativo." />
         <KpiCard icon={BarChart2} label="OS do Mês" color="#8B5CF6"
-          value={data.os_mes ?? 0} sub="Abertas este mês" />
+          value={data.os_mes ?? 0} sub="Abertas este mês"
+          tooltip="Total de ordens de serviço abertas no mês corrente, independente do status atual." />
         <KpiCard icon={Timer} label="T. Resposta" color="#F97316"
-          value={fmtMin(data.tempo_resposta_medio_min)} sub="Tempo médio de resposta" />
+          value={fmtMin(data.tempo_resposta_medio_min)} sub="Tempo médio de resposta"
+          tooltip="Tempo médio entre a abertura da OS e o início efetivo do atendimento pelo técnico. Reflete agilidade da equipe." />
         <KpiCard icon={DollarSign} label="Custo Parada" color="#EF4444"
-          value={fmtBRL(data.custo_total_parada_mes)} sub="Acumulado no mês" />
+          value={fmtBRL(data.custo_total_parada_mes)} sub="Acumulado no mês"
+          tooltip="Soma do custo de parada de máquina de todas as OS do mês. Calculado com base no valor/hora configurado em cada equipamento." />
       </div>
 
       {/* Charts row */}
