@@ -132,7 +132,7 @@ PLAN_LIMITS = {
         "relatorios": False, "grupos_subgrupos": False, "aprovacao_setor": False,
         "modulo_preditivo": False, "planos_preventivos": False, "api_iot": False,
         "notificacoes_email": False, "exportacao_pdf": False, "sso": False,
-        "dashboard_avancado": False, "kanban": False, "modulo_estoque": False, "suporte": "none",
+        "dashboard_avancado": False, "kanban": False, "modulo_estoque": False, "modulo_evidencias": False, "suporte": "none",
     },
     PlanoSaaS.ESSENCIAL: {
         "label": "Essencial", "price": 250.0, "preco_mensal": 250.0,
@@ -141,7 +141,7 @@ PLAN_LIMITS = {
         "relatorios": True, "grupos_subgrupos": True, "aprovacao_setor": True,
         "modulo_preditivo": False, "planos_preventivos": False, "api_iot": False,
         "notificacoes_email": True, "exportacao_pdf": False, "sso": False,
-        "dashboard_avancado": False, "kanban": False, "modulo_estoque": False, "suporte": "email",
+        "dashboard_avancado": False, "kanban": False, "modulo_estoque": False, "modulo_evidencias": False, "suporte": "email",
     },
     PlanoSaaS.PROFISSIONAL: {
         "label": "Profissional", "price": 490.0, "preco_mensal": 490.0,
@@ -152,7 +152,7 @@ PLAN_LIMITS = {
         "planos_preventivos": True, "api_iot": True,
         "notificacoes_email": True, "exportacao_pdf": True, "sso": False,
         "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
-        "relatorios_custo": True, "modulo_estoque": True, "suporte": "prioritario",
+        "relatorios_custo": True, "modulo_estoque": True, "modulo_evidencias": True, "suporte": "prioritario",
     },
     PlanoSaaS.AVANCADO: {
         "label": "Avançado", "price": 790.0, "preco_mensal": 790.0,
@@ -164,7 +164,7 @@ PLAN_LIMITS = {
         "notificacoes_email": True, "notificacoes_whatsapp": True,
         "exportacao_pdf": True, "integracoes_basicas": True, "sso": False,
         "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
-        "relatorios_custo": True, "analise_pareto": True, "modulo_estoque": True, "suporte": "prioritario",
+        "relatorios_custo": True, "analise_pareto": True, "modulo_estoque": True, "modulo_evidencias": True, "suporte": "prioritario",
     },
     PlanoSaaS.ENTERPRISE: {
         "label": "Enterprise", "price": 1290.0, "preco_mensal": 1290.0,
@@ -176,7 +176,7 @@ PLAN_LIMITS = {
         "notificacoes_email": True, "notificacoes_whatsapp": True,
         "exportacao_pdf": True, "integracoes_avancadas": True, "sso": True,
         "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
-        "relatorios_custo": True, "analise_pareto": True, "modulo_estoque": True,
+        "relatorios_custo": True, "analise_pareto": True, "modulo_estoque": True, "modulo_evidencias": True,
         "onboarding_personalizado": True, "sla_customizado": True, "suporte": "dedicado",
     },
 }
@@ -332,6 +332,11 @@ class OrdemServico(Base):
     valor_hora_tecnico = Column(Float, nullable=True)  # snapshot do valor/hora do técnico
     # Fase 1 — custo acumulado de peças consumidas na OS
     custo_total_pecas = Column(Float, nullable=True, default=0)
+
+    # Fase 2 — assinatura digital de encerramento (imutável após assinar)
+    assinatura_hash = Column(String(64), nullable=True)    # SHA-256 do estado da OS
+    assinado_por = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    assinado_em = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index('idx_os_org', 'organization_id'),)
 
@@ -918,6 +923,15 @@ def ensure_database_schema():
         except Exception as _e:
             logger.warning("Falha ao criar tabelas de almoxarifado: %s", _e)
 
+        # ── Fase 2: tabelas do módulo de Evidências ───────────────────────────
+        try:
+            from app.models.evidencias import Base as EvidenciasBase
+            from app.database import engine as _ev_engine
+            EvidenciasBase.metadata.create_all(bind=_ev_engine)
+            logger.info("Tabelas de evidencias criadas/verificadas.")
+        except Exception as _e:
+            logger.warning("Falha ao criar tabelas de evidencias: %s", _e)
+
         # Schema migrations for new columns
         _migrations = [
             "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS api_key VARCHAR(64) UNIQUE",
@@ -1031,6 +1045,10 @@ def ensure_database_schema():
             "CREATE INDEX IF NOT EXISTS idx_os_excecoes_area_os ON os_excecoes_area (os_id)",
             # Fase 1 — custo de peças na OS
             "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS custo_total_pecas FLOAT DEFAULT 0",
+            # Fase 2 — assinatura digital de encerramento
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinatura_hash VARCHAR(64)",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinado_por UUID",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinado_em TIMESTAMPTZ",
         ]
         try:
             from sqlalchemy import text as sa_text
@@ -3305,7 +3323,40 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
                 )
 
         elif data.status == StatusOS.FECHADA:
+            # Fase 2 — verificar checklists obrigatórios antes de fechar
+            try:
+                from app.routers.evidencias import verificar_checklists_pendentes
+                _checklist_err = verificar_checklists_pendentes(db, os, str(os.organization_id))
+                if _checklist_err:
+                    raise HTTPException(status_code=422, detail=_checklist_err)
+            except HTTPException:
+                raise
+            except Exception as _ce:
+                logger.warning("Falha ao verificar checklists: %s", _ce)
+
             os.fechado_at = now
+
+            # Fase 2 — assinatura digital: hash do estado imutável da OS
+            try:
+                import hashlib as _hl, json as _json
+                _state = {
+                    "id": str(os.id),
+                    "numero": os.numero,
+                    "status": "fechada",
+                    "descricao": os.descricao or "",
+                    "solucao": data.solucao or os.solucao or "",
+                    "tecnico_id": str(os.tecnico_id) if os.tecnico_id else None,
+                    "fechado_at": now.isoformat(),
+                    "organization_id": str(os.organization_id),
+                }
+                os.assinatura_hash = _hl.sha256(
+                    _json.dumps(_state, sort_keys=True).encode()
+                ).hexdigest()
+                os.assinado_por = user.id
+                os.assinado_em = now
+            except Exception as _se:
+                logger.warning("Falha ao gerar assinatura da OS: %s", _se)
+
             criar_notificacao(
                 db, org_id=os.organization_id, destinatario_id=os.solicitante_id,
                 tipo="os_fechada",
@@ -7219,9 +7270,15 @@ app.include_router(api_router)
 from app.routers.estoque import router as _estoque_router
 from app.routers.estoque import get_current_user_stub as _estoque_user_stub
 
-# Injeta o get_current_user real no router de estoque
 app.dependency_overrides[_estoque_user_stub] = get_current_user
 app.include_router(_estoque_router, prefix="/api")
+
+# ── Módulo de Evidências — Fase 2 ────────────────────────────────────────────
+from app.routers.evidencias import router as _evidencias_router
+from app.routers.evidencias import get_current_user_stub as _evidencias_user_stub
+
+app.dependency_overrides[_evidencias_user_stub] = get_current_user
+app.include_router(_evidencias_router, prefix="/api")
 
 @app.get("/")
 async def root():

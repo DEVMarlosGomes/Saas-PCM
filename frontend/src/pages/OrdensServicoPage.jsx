@@ -5,6 +5,8 @@ import {
   getOSEquipe, addOSEquipeMembro, removeOSEquipeMembro, getOSHistorico, lookupColaborador,
   reassinarTecnico, getOSExceoesArea, addOSExcecaoArea, removeOSExcecaoArea,
   getPecasOS, consumirPecaOS, getPecas, getDepositos,
+  listarAnexosOS, uploadAnexoOS, deletarAnexo,
+  getChecklistsOS, executarChecklist, getChecklistTemplates,
 } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -375,6 +377,15 @@ export default function OrdensServicoPage() {
   const [pecasCatalogo, setPecasCatalogo] = useState([]);
   const [depositosCatalogo, setDepositosCatalogo] = useState([]);
   const [loadingConsumo, setLoadingConsumo] = useState(false);
+  // Fase 2 — Evidências (Anexos + Checklists)
+  const [detailAnexos, setDetailAnexos] = useState([]);
+  const [detailChecklists, setDetailChecklists] = useState([]);
+  const [checklistTemplates, setChecklistTemplates] = useState([]);
+  const [loadingEvidencias, setLoadingEvidencias] = useState(false);
+  const [uploadingAnexo, setUploadingAnexo] = useState(false);
+  const [showChecklistModal, setShowChecklistModal] = useState(false);
+  const [checklistExecForm, setChecklistExecForm] = useState({ template_id: '', respostas: {} });
+  const [loadingChecklist, setLoadingChecklist] = useState(false);
   const [showCustoModal, setShowCustoModal] = useState(false);
   const [custoForm, setCustoForm]           = useState({ tipo: "consumo", descricao: "", valor: "", quantidade: "1" });
   const [deletingCustoId, setDeletingCustoId] = useState(null);  // id do custo sendo excluído (confirmação)
@@ -720,6 +731,20 @@ export default function OrdensServicoPage() {
       setDetailPecas(rPecasOS.data || { itens: [], custo_total_pecas: 0 });
     } catch { setDetailPecas({ itens: [], custo_total_pecas: 0 }); }
     finally { setLoadingPecas(false); }
+
+    // Fase 2 — Evidências (Anexos + Checklists)
+    setLoadingEvidencias(true);
+    try {
+      const [rAnexos, rChecklists, rTmpls] = await Promise.all([
+        listarAnexosOS(osId).catch(() => ({ data: [] })),
+        getChecklistsOS(osId).catch(() => ({ data: [] })),
+        getChecklistTemplates({ apenas_ativos: true }).catch(() => ({ data: [] })),
+      ]);
+      setDetailAnexos(rAnexos.data || []);
+      setDetailChecklists(rChecklists.data || []);
+      setChecklistTemplates(rTmpls.data || []);
+    } catch { setDetailAnexos([]); setDetailChecklists([]); setChecklistTemplates([]); }
+    finally { setLoadingEvidencias(false); }
 
     // Equipe (apenas prev/pred)
     if (os.tipo === "preventiva" || os.tipo === "preditiva") {
@@ -1345,6 +1370,124 @@ export default function OrdensServicoPage() {
                 </div>
               )}
 
+              {/* Fase 2 — Evidências: Anexos + Checklists */}
+              <div className="rounded-xl border border-border/50 overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30 border-b border-border/50">
+                  <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider flex items-center gap-1.5">
+                    📎 Evidências
+                    {detailAnexos.length > 0 && (
+                      <span className="bg-blue-500/20 text-blue-400 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                        {detailAnexos.length}
+                      </span>
+                    )}
+                  </p>
+                  {['em_atendimento', 'aguardando_revisao', 'revisada'].includes(detailOS?.status) && (
+                    <label className="text-[10px] text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-blue-500/10 cursor-pointer">
+                      + Foto/PDF
+                      <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          setUploadingAnexo(true);
+                          try {
+                            const fd = new FormData();
+                            fd.append('file', f);
+                            await uploadAnexoOS(detailOS.id, fd);
+                            const r = await listarAnexosOS(detailOS.id);
+                            setDetailAnexos(r.data || []);
+                            toast.success('Anexo enviado com sucesso');
+                          } catch (err) {
+                            toast.error(err.response?.data?.detail || 'Erro ao enviar anexo');
+                          } finally {
+                            setUploadingAnexo(false);
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
+                <div className="px-4 py-3">
+                  {loadingEvidencias || uploadingAnexo ? (
+                    <div className="flex items-center justify-center py-3">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : detailAnexos.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-2">Nenhum anexo.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {detailAnexos.map(a => (
+                        <div key={a.id} className="flex items-center justify-between text-sm py-1">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <span className="text-lg">
+                              {a.mime === 'application/pdf' ? '📄' : '🖼️'}
+                            </span>
+                            <span className="text-xs text-foreground/80 truncate">{a.nome_original}</span>
+                            <span className="text-[10px] text-muted-foreground shrink-0">
+                              {(a.tamanho / 1024).toFixed(0)} KB
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {a.url_download && (
+                              <a href={a.url_download} target="_blank" rel="noopener noreferrer"
+                                className="text-[10px] text-blue-400 hover:text-blue-300">
+                                Baixar
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Checklists */}
+                  {checklistTemplates.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border/30">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] text-muted-foreground uppercase font-semibold">Checklists</span>
+                        {['em_atendimento', 'aguardando_revisao'].includes(detailOS?.status) && checklistTemplates.length > 0 && (
+                          <button onClick={() => {
+                            const tmpl = checklistTemplates[0];
+                            const respostas = {};
+                            (tmpl.itens || []).forEach(item => { respostas[String(item.id)] = { resposta: 'ok', observacao: '' }; });
+                            setChecklistExecForm({ template_id: tmpl.id, respostas });
+                            setShowChecklistModal(true);
+                          }}
+                            className="text-[10px] text-green-400 hover:text-green-300 px-2 py-0.5 rounded hover:bg-green-500/10">
+                            + Preencher
+                          </button>
+                        )}
+                      </div>
+                      {detailChecklists.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Nenhum checklist preenchido.</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {detailChecklists.map(c => (
+                            <div key={c.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span className="text-green-400">✓</span>
+                              <span>Checklist preenchido em {new Date(c.executado_em).toLocaleDateString('pt-BR')}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Assinatura */}
+                  {detailOS?.assinatura_hash && (
+                    <div className="mt-3 pt-3 border-t border-border/30">
+                      <div className="flex items-center gap-2 text-[10px] text-green-400">
+                        <span>🔏</span>
+                        <span>Assinatura digital registrada</span>
+                      </div>
+                      <p className="text-[9px] text-muted-foreground font-mono mt-1 break-all">
+                        {detailOS.assinatura_hash}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Breakdown financeiro completo */}
               {podeCustoCompleto && (
                 <div className="rounded-xl border border-border/50 overflow-hidden">
@@ -1965,6 +2108,88 @@ export default function OrdensServicoPage() {
           </div>
         </div>
       )}
+
+      {/* ===== Modal Checklist Execução (Fase 2) ===== */}
+      {showChecklistModal && checklistExecForm.template_id && (() => {
+        const tmpl = checklistTemplates.find(t => t.id === checklistExecForm.template_id);
+        if (!tmpl) return null;
+        return (
+          <div className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <div className="bg-background border border-border rounded-xl w-full max-w-lg max-h-[90vh] flex flex-col shadow-2xl">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+                <h3 className="font-semibold text-sm">Checklist: {tmpl.nome}</h3>
+                <button onClick={() => setShowChecklistModal(false)} className="text-muted-foreground hover:text-foreground text-xl">×</button>
+              </div>
+              <div className="overflow-y-auto flex-1 px-5 py-4 space-y-3">
+                {(tmpl.itens || []).map(item => (
+                  <div key={item.id} className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-foreground/90 flex-1">{item.descricao}</span>
+                      {item.obrigatorio && <span className="text-[10px] text-red-400">*</span>}
+                    </div>
+                    <div className="flex gap-2">
+                      {['ok', 'nok', 'na'].map(r => (
+                        <button key={r}
+                          onClick={() => setChecklistExecForm(f => ({
+                            ...f,
+                            respostas: { ...f.respostas, [String(item.id)]: { ...f.respostas[String(item.id)], resposta: r, observacao: f.respostas[String(item.id)]?.observacao || '' } }
+                          }))}
+                          className={`px-3 py-1 rounded text-xs font-medium border transition-colors ${
+                            checklistExecForm.respostas[String(item.id)]?.resposta === r
+                              ? r === 'ok' ? 'bg-green-600 border-green-500 text-white'
+                                : r === 'nok' ? 'bg-red-600 border-red-500 text-white'
+                                : 'bg-gray-600 border-gray-500 text-white'
+                              : 'border-border text-muted-foreground hover:bg-muted'
+                          }`}>
+                          {r === 'ok' ? '✓ OK' : r === 'nok' ? '✗ Não OK' : 'N/A'}
+                        </button>
+                      ))}
+                    </div>
+                    {checklistExecForm.respostas[String(item.id)]?.resposta === 'nok' && (
+                      <input
+                        placeholder="Observação (obrigatória para Não OK)..."
+                        className="w-full bg-muted border border-border rounded px-3 py-1.5 text-xs text-foreground"
+                        value={checklistExecForm.respostas[String(item.id)]?.observacao || ''}
+                        onChange={e => setChecklistExecForm(f => ({
+                          ...f,
+                          respostas: { ...f.respostas, [String(item.id)]: { ...f.respostas[String(item.id)], observacao: e.target.value } }
+                        }))}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 px-5 py-4 border-t border-border">
+                <button onClick={() => setShowChecklistModal(false)}
+                  className="flex-1 px-4 py-2 rounded-lg border border-border text-muted-foreground hover:bg-muted text-sm">
+                  Cancelar
+                </button>
+                <button disabled={loadingChecklist}
+                  onClick={async () => {
+                    setLoadingChecklist(true);
+                    try {
+                      await executarChecklist(detailOS.id, {
+                        template_id: checklistExecForm.template_id,
+                        respostas: checklistExecForm.respostas,
+                      });
+                      const r = await getChecklistsOS(detailOS.id);
+                      setDetailChecklists(r.data || []);
+                      setShowChecklistModal(false);
+                      toast.success('Checklist salvo com sucesso!');
+                    } catch (err) {
+                      toast.error(err.response?.data?.detail || 'Erro ao salvar checklist.');
+                    } finally {
+                      setLoadingChecklist(false);
+                    }
+                  }}
+                  className="flex-1 px-4 py-2 rounded-lg bg-green-600 hover:bg-green-500 text-white text-sm font-medium disabled:opacity-50">
+                  {loadingChecklist ? <Loader2 className="h-4 w-4 animate-spin mx-auto" /> : 'Salvar Checklist'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

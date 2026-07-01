@@ -29,6 +29,7 @@ import KanbanPage from "./pages/KanbanPage";
 import SuperuserPage from "./pages/SuperuserPage";
 import EstoquePage from "./pages/EstoquePage";
 import FornecedoresPage from "./pages/FornecedoresPage";
+import EvidenciasPage from "./pages/EvidenciasPage";
 
 // Layout
 import AppLayout from "./components/AppLayout";
@@ -255,6 +256,7 @@ function AppRoutes() {
         <Route path="colaboradores" element={<ColaboradoresPage />} />
         <Route path="estoque" element={<EstoquePage />} />
         <Route path="fornecedores" element={<FornecedoresPage />} />
+        <Route path="evidencias" element={<EvidenciasPage />} />
         <Route path="auditoria" element={<AuditoriaPage />} />
         <Route path="preditivo" element={<PreditivoPage />} />
         <Route path="relatorios" element={<RelatoriosPage />} />

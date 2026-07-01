@@ -85,6 +85,7 @@ PLAN_LIMITS = {
         "dashboard_avancado": False,
         "kanban": False,
         "modulo_estoque": False,
+        "modulo_evidencias": False,
         "features": [
             "Até 3 colaboradores",
             "Até 5 equipamentos",
@@ -117,6 +118,7 @@ PLAN_LIMITS = {
         "dashboard_avancado": False,
         "kanban": False,
         "modulo_estoque": False,
+        "modulo_evidencias": False,
         "features": [
             "Até 10 colaboradores",
             "Até 20 equipamentos",
@@ -152,6 +154,7 @@ PLAN_LIMITS = {
         "setores_independentes": True,
         "relatorios_custo": True,
         "modulo_estoque": True,
+        "modulo_evidencias": True,
         "features": [
             "Até 45 colaboradores",
             "Até 35 equipamentos",
@@ -193,6 +196,7 @@ PLAN_LIMITS = {
         "relatorios_custo": True,
         "analise_pareto": True,
         "modulo_estoque": True,
+        "modulo_evidencias": True,
         "features": [
             "Até 100 colaboradores",
             "Até 50 equipamentos",
@@ -237,6 +241,7 @@ PLAN_LIMITS = {
         "onboarding_personalizado": True,
         "sla_customizado": True,
         "modulo_estoque": True,
+        "modulo_evidencias": True,
         "features": [
             "Colaboradores ilimitados",
             "Equipamentos ilimitados",

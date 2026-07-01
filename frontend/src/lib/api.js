@@ -228,6 +228,21 @@ export const getPecasOS = (osId) => api.get(`/ordens-servico/${osId}/pecas`);
 // Relatório
 export const getConsumoPorEquipamento = (params) => api.get('/relatorios/consumo-por-equipamento', { params });
 
+// ─── Evidências & Compliance (Fase 2) ─────────────────────
+export const uploadAnexoOS = (osId, formData) =>
+  api.post(`/ordens-servico/${osId}/anexos`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+export const listarAnexosOS = (osId) => api.get(`/ordens-servico/${osId}/anexos`);
+export const downloadAnexo = (anexoId) => api.get(`/anexos/${anexoId}/download`, { maxRedirects: 0 });
+export const deletarAnexo = (anexoId) => api.delete(`/anexos/${anexoId}`);
+
+export const getChecklistTemplates = (params) => api.get('/checklist-templates', { params });
+export const createChecklistTemplate = (data) => api.post('/checklist-templates', data);
+export const updateChecklistTemplate = (id, data) => api.put(`/checklist-templates/${id}`, data);
+export const desativarChecklistTemplate = (id) => api.delete(`/checklist-templates/${id}`);
+
+export const executarChecklist = (osId, data) => api.post(`/ordens-servico/${osId}/checklist`, data);
+export const getChecklistsOS = (osId) => api.get(`/ordens-servico/${osId}/checklist`);
+
 // ─── Reviews ──────────────────────────────────────────────
 export const getPendingReviews = () => api.get('/ordens-servico/pending-reviews');
 export const autoApproveExpired = () => api.post('/ordens-servico/auto-approve');
