@@ -84,6 +84,7 @@ PLAN_LIMITS = {
         "suporte": "none",
         "dashboard_avancado": False,
         "kanban": False,
+        "modulo_estoque": False,
         "features": [
             "Até 3 colaboradores",
             "Até 5 equipamentos",
@@ -115,6 +116,7 @@ PLAN_LIMITS = {
         "suporte": "email",
         "dashboard_avancado": False,
         "kanban": False,
+        "modulo_estoque": False,
         "features": [
             "Até 10 colaboradores",
             "Até 20 equipamentos",
@@ -149,11 +151,13 @@ PLAN_LIMITS = {
         "kanban": True,
         "setores_independentes": True,
         "relatorios_custo": True,
+        "modulo_estoque": True,
         "features": [
             "Até 45 colaboradores",
             "Até 35 equipamentos",
             "Setores independentes",
             "Dashboards e Kanban",
+            "Almoxarifado e estoque",
             "Suporte prioritário",
         ],
     },
@@ -188,10 +192,12 @@ PLAN_LIMITS = {
         "setores_independentes": True,
         "relatorios_custo": True,
         "analise_pareto": True,
+        "modulo_estoque": True,
         "features": [
             "Até 100 colaboradores",
             "Até 50 equipamentos",
             "Dashboards avançados",
+            "Almoxarifado completo",
             "Relatórios personalizados",
             "Integrações básicas",
             "Suporte prioritário",
@@ -230,6 +236,7 @@ PLAN_LIMITS = {
         "analise_pareto": True,
         "onboarding_personalizado": True,
         "sla_customizado": True,
+        "modulo_estoque": True,
         "features": [
             "Colaboradores ilimitados",
             "Equipamentos ilimitados",

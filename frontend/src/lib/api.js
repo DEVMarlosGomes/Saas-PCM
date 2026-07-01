@@ -197,6 +197,37 @@ export const getHistoricoLeituras = (equipId, params) => api.get(`/preditivo/lei
 export const getRelatorioKPIs = (params) => api.get('/relatorios/kpis', { params });
 export const getRelatorioEquipamentos = (params) => api.get('/relatorios/equipamentos', { params });
 
+// ─── Almoxarifado / Estoque ─────────────────────────────────
+// Fornecedores
+export const getFornecedores = (params) => api.get('/fornecedores', { params });
+export const createFornecedor = (data) => api.post('/fornecedores', data);
+export const updateFornecedor = (id, data) => api.put(`/fornecedores/${id}`, data);
+
+// Peças
+export const getPecas = (params) => api.get('/pecas', { params });
+export const getPeca = (id) => api.get(`/pecas/${id}`);
+export const createPeca = (data) => api.post('/pecas', data);
+export const updatePeca = (id, data) => api.put(`/pecas/${id}`, data);
+export const desativarPeca = (id) => api.delete(`/pecas/${id}`);
+
+// Depósitos
+export const getDepositos = (params) => api.get('/depositos', { params });
+export const createDeposito = (data) => api.post('/depositos', data);
+export const updateDeposito = (id, data) => api.put(`/depositos/${id}`, data);
+
+// Saldos e movimentos
+export const getSaldoEstoque = (params) => api.get('/estoque/saldo', { params });
+export const getAbaixoPontoPedido = () => api.get('/estoque/abaixo-ponto-pedido');
+export const registrarMovimento = (data) => api.post('/estoque/movimento', data);
+export const getMovimentos = (params) => api.get('/estoque/movimentos', { params });
+
+// Consumo em OS
+export const consumirPecaOS = (osId, data) => api.post(`/ordens-servico/${osId}/pecas`, data);
+export const getPecasOS = (osId) => api.get(`/ordens-servico/${osId}/pecas`);
+
+// Relatório
+export const getConsumoPorEquipamento = (params) => api.get('/relatorios/consumo-por-equipamento', { params });
+
 // ─── Reviews ──────────────────────────────────────────────
 export const getPendingReviews = () => api.get('/ordens-servico/pending-reviews');
 export const autoApproveExpired = () => api.post('/ordens-servico/auto-approve');

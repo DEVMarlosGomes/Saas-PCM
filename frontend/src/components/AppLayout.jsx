@@ -26,6 +26,8 @@ import {
   BarChart2,
   Kanban,
   HardHat,
+  Package,
+  Truck,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import NotificacoesDropdown from "./shared/NotificacoesDropdown";
@@ -79,9 +81,11 @@ const navSections = [
   {
     label: "Gestão",
     items: [
-      { to: "/colaboradores", icon: HardHat,  label: "Colaboradores", roles: ["admin", "gerente_industrial", "supervisor_manutencao", "lider"] },
-      { to: "/usuarios",      icon: Users,    label: "Usuários",      roles: ["admin", "gerente_industrial"] },
-      { to: "/auditoria",     icon: FileText, label: "Auditoria",     roles: ["admin", "gerente_industrial", "supervisor_manutencao", "lider"] },
+      { to: "/colaboradores", icon: HardHat,   label: "Colaboradores", roles: ["admin", "gerente_industrial", "supervisor_manutencao", "lider"] },
+      { to: "/estoque",       icon: Package,   label: "Almoxarifado",  roles: R_MANUT_LIDER },
+      { to: "/fornecedores",  icon: Truck,     label: "Fornecedores",  roles: ["admin", "gerente_industrial", "supervisor_manutencao", "lider"] },
+      { to: "/usuarios",      icon: Users,     label: "Usuários",      roles: ["admin", "gerente_industrial"] },
+      { to: "/auditoria",     icon: FileText,  label: "Auditoria",     roles: ["admin", "gerente_industrial", "supervisor_manutencao", "lider"] },
     ],
   },
   {

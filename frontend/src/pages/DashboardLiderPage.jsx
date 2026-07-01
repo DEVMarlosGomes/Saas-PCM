@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { getDashboardLider } from "../lib/api";
+import { getDashboardLider, getAbaixoPontoPedido, getSaldoEstoque } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Activity, Clock, Wrench, BarChart2, Timer, DollarSign,
-  Users, AlertCircle, RefreshCw, Loader2, TrendingUp,
+  Users, AlertCircle, RefreshCw, Loader2, TrendingUp, Package,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LabelList,
@@ -95,12 +95,19 @@ export default function DashboardLiderPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
+  const [estoqueKpi, setEstoqueKpi] = useState({ alertas: 0, valorTotal: 0 });
 
   const load = useCallback(async () => {
     try {
-      const res = await getDashboardLider();
+      const [res, rAlertas, rSaldos] = await Promise.all([
+        getDashboardLider(),
+        getAbaixoPontoPedido().catch(() => ({ data: [] })),
+        getSaldoEstoque().catch(() => ({ data: [] })),
+      ]);
       setData(res.data);
       setLastUpdate(new Date());
+      const valorTotal = (rSaldos.data || []).reduce((acc, s) => acc + parseFloat(s.valor_total || 0), 0);
+      setEstoqueKpi({ alertas: (rAlertas.data || []).length, valorTotal });
     } catch (err) {
       if (err.response?.status === 403) {
         toast.error("Acesso negado. Este dashboard é exclusivo para líderes e administradores.");
@@ -187,6 +194,12 @@ export default function DashboardLiderPage() {
         <KpiCard icon={DollarSign} label="Custo Parada" color="#EF4444"
           value={fmtBRL(data.custo_total_parada_mes)} sub="Acumulado no mês"
           tooltip="Soma do custo de parada de máquina de todas as OS do mês. Calculado com base no valor/hora configurado em cada equipamento." />
+        <KpiCard icon={Package} label="Custo Peças" color="#F59E0B"
+          value={fmtBRL(estoqueKpi.valorTotal)} sub="Valor em estoque"
+          tooltip="Valor total do estoque de peças (quantidade × custo médio por depósito)." />
+        <KpiCard icon={AlertCircle} label="Abaixo Pedido" color={estoqueKpi.alertas > 0 ? "#EF4444" : "#10B981"}
+          value={estoqueKpi.alertas} sub="Itens abaixo do ponto"
+          tooltip="Quantidade de itens de estoque com saldo abaixo do ponto de pedido configurado." />
       </div>
 
       {/* Charts row */}

@@ -4,6 +4,7 @@ import {
   getCustos, createCusto, deleteCusto, getPendingReviews, autoApproveExpired, buscarPorCracha,
   getOSEquipe, addOSEquipeMembro, removeOSEquipeMembro, getOSHistorico, lookupColaborador,
   reassinarTecnico, getOSExceoesArea, addOSExcecaoArea, removeOSExcecaoArea,
+  getPecasOS, consumirPecaOS, getPecas, getDepositos,
 } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -366,6 +367,14 @@ export default function OrdensServicoPage() {
   const [detailHistorico, setDetailHistorico] = useState([]);
   const [loadingEquipe, setLoadingEquipe] = useState(false);
   const [loadingHistorico, setLoadingHistorico] = useState(false);
+  // Fase 1 — Peças do Almoxarifado
+  const [detailPecas, setDetailPecas] = useState({ itens: [], custo_total_pecas: 0 });
+  const [loadingPecas, setLoadingPecas] = useState(false);
+  const [showConsumoModal, setShowConsumoModal] = useState(false);
+  const [consumoForm, setConsumoForm] = useState({ peca_id: '', deposito_id: '', quantidade: '', motivo: '' });
+  const [pecasCatalogo, setPecasCatalogo] = useState([]);
+  const [depositosCatalogo, setDepositosCatalogo] = useState([]);
+  const [loadingConsumo, setLoadingConsumo] = useState(false);
   const [showCustoModal, setShowCustoModal] = useState(false);
   const [custoForm, setCustoForm]           = useState({ tipo: "consumo", descricao: "", valor: "", quantidade: "1" });
   const [deletingCustoId, setDeletingCustoId] = useState(null);  // id do custo sendo excluído (confirmação)
@@ -697,6 +706,20 @@ export default function OrdensServicoPage() {
     setLoadingHistorico(true);
     try { const hRes = await getOSHistorico(osId); setDetailHistorico(hRes.data || []); } catch { setDetailHistorico([]); }
     finally { setLoadingHistorico(false); }
+
+    // Fase 1 — Peças utilizadas
+    setLoadingPecas(true);
+    try {
+      const [rPecas, rDep, rPecasOS] = await Promise.all([
+        getPecas().catch(() => ({ data: [] })),
+        getDepositos().catch(() => ({ data: [] })),
+        getPecasOS(osId).catch(() => ({ data: { itens: [], custo_total_pecas: 0 } })),
+      ]);
+      setPecasCatalogo(rPecas.data || []);
+      setDepositosCatalogo(rDep.data || []);
+      setDetailPecas(rPecasOS.data || { itens: [], custo_total_pecas: 0 });
+    } catch { setDetailPecas({ itens: [], custo_total_pecas: 0 }); }
+    finally { setLoadingPecas(false); }
 
     // Equipe (apenas prev/pred)
     if (os.tipo === "preventiva" || os.tipo === "preditiva") {
@@ -1266,6 +1289,62 @@ export default function OrdensServicoPage() {
                 )}
               </div>
 
+              {/* ── Fase 1: Peças utilizadas (Almoxarifado) ──────────────────── */}
+              {pecasCatalogo.length > 0 && (
+                <div className="rounded-xl border border-border/50 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30 border-b border-border/50">
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider flex items-center gap-1.5">
+                      📦 Peças Utilizadas
+                      {detailPecas.itens?.length > 0 && (
+                        <span className="bg-amber-500/20 text-amber-500 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                          {detailPecas.itens.length}
+                        </span>
+                      )}
+                    </p>
+                    {['em_atendimento', 'aguardando_revisao'].includes(detailOS.status) && (
+                      <button onClick={() => setShowConsumoModal(true)}
+                        className="text-[10px] text-amber-500 hover:text-amber-400 px-2 py-1 rounded hover:bg-amber-500/10">
+                        + Registrar uso
+                      </button>
+                    )}
+                  </div>
+                  <div className="px-4 py-3">
+                    {loadingPecas ? (
+                      <div className="flex items-center justify-center py-3">
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : detailPecas.itens?.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-2">
+                        Nenhuma peça registrada para esta OS.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {detailPecas.itens.map((p, i) => (
+                          <div key={i} className="flex items-center justify-between text-sm py-1 border-b border-border/30 last:border-0">
+                            <div className="flex-1 min-w-0">
+                              <span className="font-mono text-amber-500 text-xs mr-1">{p.peca_codigo}</span>
+                              <span className="text-foreground text-xs truncate">{p.peca_descricao}</span>
+                              <div className="text-[10px] text-muted-foreground mt-0.5">
+                                {p.quantidade} {p.unidade} × R$ {parseFloat(p.custo_unitario).toFixed(2)} — {p.deposito}
+                              </div>
+                            </div>
+                            <span className="font-mono text-sm font-medium shrink-0 ml-2">
+                              R$ {parseFloat(p.custo_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-xs text-muted-foreground font-semibold">Total Peças</span>
+                          <span className="font-mono font-bold text-amber-500">
+                            R$ {parseFloat(detailPecas.custo_total_pecas || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Breakdown financeiro completo */}
               {podeCustoCompleto && (
                 <div className="rounded-xl border border-border/50 overflow-hidden">
@@ -1807,6 +1886,85 @@ export default function OrdensServicoPage() {
 
       {bloqueioModal && <BloqueioModal data={bloqueioModal} onClose={() => setBloqueioModal(null)} onConfirm={handleBloqueioConfirm} />}
       <UpgradeDialog open={upgradeOpen} onClose={closeUpgrade} message={upgradeMessage} />
+
+      {/* ===== Modal Consumo de Peça em OS (Almoxarifado Fase 1) ===== */}
+      {showConsumoModal && (
+        <div className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowConsumoModal(false)}>
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm shadow-2xl"
+            onClick={e => e.stopPropagation()}>
+            <h2 className="text-base font-semibold mb-4">📦 Registrar Uso de Peça</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Peça *</label>
+                <select className="w-full bg-background border border-border rounded-lg px-3 py-2 text-foreground text-sm"
+                  value={consumoForm.peca_id}
+                  onChange={e => setConsumoForm(f => ({ ...f, peca_id: e.target.value }))}>
+                  <option value="">Selecione a peça…</option>
+                  {pecasCatalogo.map(p => (
+                    <option key={p.id} value={p.id}>{p.codigo} — {p.descricao} (saldo: {p.saldo_total} {p.unidade})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Depósito *</label>
+                <select className="w-full bg-background border border-border rounded-lg px-3 py-2 text-foreground text-sm"
+                  value={consumoForm.deposito_id}
+                  onChange={e => setConsumoForm(f => ({ ...f, deposito_id: e.target.value }))}>
+                  <option value="">Selecione o depósito…</option>
+                  {depositosCatalogo.map(d => <option key={d.id} value={d.id}>{d.nome}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Quantidade *</label>
+                <input type="number" step="0.001" min="0.001"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-foreground text-sm"
+                  value={consumoForm.quantidade}
+                  onChange={e => setConsumoForm(f => ({ ...f, quantidade: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Motivo (opcional)</label>
+                <input className="w-full bg-background border border-border rounded-lg px-3 py-2 text-foreground text-sm"
+                  placeholder="Ex: Substituição de rolamento…"
+                  value={consumoForm.motivo}
+                  onChange={e => setConsumoForm(f => ({ ...f, motivo: e.target.value }))} />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setShowConsumoModal(false)}
+                  className="flex-1 px-4 py-2 rounded-lg border border-border text-muted-foreground hover:bg-muted text-sm">
+                  Cancelar
+                </button>
+                <button disabled={loadingConsumo || !consumoForm.peca_id || !consumoForm.deposito_id || !consumoForm.quantidade}
+                  onClick={async () => {
+                    if (!consumoForm.peca_id || !consumoForm.deposito_id || !consumoForm.quantidade) return;
+                    setLoadingConsumo(true);
+                    try {
+                      await consumirPecaOS(detailOS.id, {
+                        peca_id: consumoForm.peca_id,
+                        deposito_id: consumoForm.deposito_id,
+                        quantidade: parseFloat(consumoForm.quantidade),
+                        motivo: consumoForm.motivo || undefined,
+                      });
+                      setShowConsumoModal(false);
+                      setConsumoForm({ peca_id: '', deposito_id: '', quantidade: '', motivo: '' });
+                      // Recarrega peças da OS
+                      const rPecasOS = await getPecasOS(detailOS.id);
+                      setDetailPecas(rPecasOS.data || { itens: [], custo_total_pecas: 0 });
+                      toast.success('Peça registrada com sucesso!');
+                    } catch (e) {
+                      toast.error(e.response?.data?.detail || 'Erro ao registrar peça.');
+                    } finally {
+                      setLoadingConsumo(false);
+                    }
+                  }}
+                  className="flex-1 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium disabled:opacity-50">
+                  {loadingConsumo ? <Loader2 className="h-4 w-4 animate-spin mx-auto" /> : 'Confirmar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

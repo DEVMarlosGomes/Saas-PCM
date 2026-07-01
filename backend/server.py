@@ -132,7 +132,7 @@ PLAN_LIMITS = {
         "relatorios": False, "grupos_subgrupos": False, "aprovacao_setor": False,
         "modulo_preditivo": False, "planos_preventivos": False, "api_iot": False,
         "notificacoes_email": False, "exportacao_pdf": False, "sso": False,
-        "dashboard_avancado": False, "kanban": False, "suporte": "none",
+        "dashboard_avancado": False, "kanban": False, "modulo_estoque": False, "suporte": "none",
     },
     PlanoSaaS.ESSENCIAL: {
         "label": "Essencial", "price": 250.0, "preco_mensal": 250.0,
@@ -141,7 +141,7 @@ PLAN_LIMITS = {
         "relatorios": True, "grupos_subgrupos": True, "aprovacao_setor": True,
         "modulo_preditivo": False, "planos_preventivos": False, "api_iot": False,
         "notificacoes_email": True, "exportacao_pdf": False, "sso": False,
-        "dashboard_avancado": False, "kanban": False, "suporte": "email",
+        "dashboard_avancado": False, "kanban": False, "modulo_estoque": False, "suporte": "email",
     },
     PlanoSaaS.PROFISSIONAL: {
         "label": "Profissional", "price": 490.0, "preco_mensal": 490.0,
@@ -152,7 +152,7 @@ PLAN_LIMITS = {
         "planos_preventivos": True, "api_iot": True,
         "notificacoes_email": True, "exportacao_pdf": True, "sso": False,
         "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
-        "relatorios_custo": True, "suporte": "prioritario",
+        "relatorios_custo": True, "modulo_estoque": True, "suporte": "prioritario",
     },
     PlanoSaaS.AVANCADO: {
         "label": "Avançado", "price": 790.0, "preco_mensal": 790.0,
@@ -164,7 +164,7 @@ PLAN_LIMITS = {
         "notificacoes_email": True, "notificacoes_whatsapp": True,
         "exportacao_pdf": True, "integracoes_basicas": True, "sso": False,
         "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
-        "relatorios_custo": True, "analise_pareto": True, "suporte": "prioritario",
+        "relatorios_custo": True, "analise_pareto": True, "modulo_estoque": True, "suporte": "prioritario",
     },
     PlanoSaaS.ENTERPRISE: {
         "label": "Enterprise", "price": 1290.0, "preco_mensal": 1290.0,
@@ -176,7 +176,7 @@ PLAN_LIMITS = {
         "notificacoes_email": True, "notificacoes_whatsapp": True,
         "exportacao_pdf": True, "integracoes_avancadas": True, "sso": True,
         "dashboard_avancado": True, "kanban": True, "setores_independentes": True,
-        "relatorios_custo": True, "analise_pareto": True,
+        "relatorios_custo": True, "analise_pareto": True, "modulo_estoque": True,
         "onboarding_personalizado": True, "sla_customizado": True, "suporte": "dedicado",
     },
 }
@@ -330,6 +330,8 @@ class OrdemServico(Base):
     custo_mao_obra = Column(Float, nullable=True)      # calculado ao concluir
     horas_trabalhadas = Column(Float, nullable=True)   # horas de atendimento
     valor_hora_tecnico = Column(Float, nullable=True)  # snapshot do valor/hora do técnico
+    # Fase 1 — custo acumulado de peças consumidas na OS
+    custo_total_pecas = Column(Float, nullable=True, default=0)
 
     __table_args__ = (Index('idx_os_org', 'organization_id'),)
 
@@ -906,6 +908,16 @@ def ensure_database_schema():
 
     try:
         Base.metadata.create_all(bind=engine)
+
+        # ── Fase 1: tabelas do módulo de Almoxarifado ─────────────────────────
+        try:
+            from app.models.estoque import Base as EstoqueBase
+            from app.database import engine as estoque_engine
+            EstoqueBase.metadata.create_all(bind=estoque_engine)
+            logger.info("Tabelas de almoxarifado criadas/verificadas.")
+        except Exception as _e:
+            logger.warning("Falha ao criar tabelas de almoxarifado: %s", _e)
+
         # Schema migrations for new columns
         _migrations = [
             "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS api_key VARCHAR(64) UNIQUE",
@@ -1017,6 +1029,8 @@ def ensure_database_schema():
                 UNIQUE(os_id, matricula)
             )""",
             "CREATE INDEX IF NOT EXISTS idx_os_excecoes_area_os ON os_excecoes_area (os_id)",
+            # Fase 1 — custo de peças na OS
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS custo_total_pecas FLOAT DEFAULT 0",
         ]
         try:
             from sqlalchemy import text as sa_text
@@ -3952,6 +3966,153 @@ async def patch_custo_mao_obra(os_id: str, data: CustoMaoObraUpdate, user: User 
     create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os_obj.id), "patch_custo_mao_obra",
         dados_novos=f'{{"horas":{data.horas_trabalhadas},"valor_hora":{data.valor_hora_tecnico},"custo_mao_obra":{os_obj.custo_mao_obra}}}')
     return {"custo_mao_obra": os_obj.custo_mao_obra, "horas_trabalhadas": os_obj.horas_trabalhadas, "valor_hora_tecnico": os_obj.valor_hora_tecnico}
+
+# ── Fase 1: Consumo de peça em OS ────────────────────────────────────────────
+
+class ConsumoOSPayload(BaseModel):
+    peca_id: str
+    deposito_id: str
+    quantidade: float = Field(..., gt=0)
+    motivo: Optional[str] = None
+
+@api_router.post("/ordens-servico/{os_id}/pecas", status_code=201)
+async def consumir_peca_em_os(
+    os_id: str,
+    data: ConsumoOSPayload,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Registra consumo de peça em uma OS: baixa atômica + custo somado à OS."""
+    # Verifica feature flag do plano
+    org = db.query(Organization).filter(Organization.id == user.organization_id).first()
+    _require_feature(org, "modulo_estoque")
+
+    # Roles permitidos: todos os de manutenção (técnico pode registrar o que usou)
+    _PODE_CONSUMIR = {
+        UserRole.ADMIN, UserRole.LIDER, UserRole.TECNICO,
+        UserRole.SUPERVISOR_MANUTENCAO, UserRole.ANALISTA_MANUTENCAO,
+        UserRole.ENGENHEIRO_MANUTENCAO, UserRole.LIDER_MANUTENCAO_ELETRICA,
+        UserRole.LIDER_MANUTENCAO_MECANICA, UserRole.GERENTE_INDUSTRIAL,
+    }
+    if user.role not in _PODE_CONSUMIR:
+        raise HTTPException(status_code=403, detail="Sem permissão para registrar consumo de peças.")
+
+    # OS deve pertencer à org
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada.")
+
+    # Importa modelos e services do módulo de estoque
+    from app.models.estoque import Peca, Deposito, SaldoEstoque
+    from app.services.estoque_service import registrar_saida, EstoqueError, saldo_total_peca
+
+    peca = db.query(Peca).filter(
+        Peca.id == data.peca_id,
+        Peca.organization_id == user.organization_id,
+    ).first()
+    if not peca:
+        raise HTTPException(status_code=404, detail="Peça não encontrada.")
+
+    deposito = db.query(Deposito).filter(
+        Deposito.id == data.deposito_id,
+        Deposito.organization_id == user.organization_id,
+    ).first()
+    if not deposito:
+        raise HTTPException(status_code=404, detail="Depósito não encontrado.")
+
+    try:
+        mov, saldo = registrar_saida(
+            db, peca, deposito, data.quantidade,
+            str(user.id), str(user.organization_id),
+            motivo=data.motivo or f"Consumo na OS {os_obj.numero}",
+            os_id=str(os_obj.id),
+        )
+    except EstoqueError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    # Soma custo à OS (campo custo_total_pecas — adicionado via migration)
+    custo_mov = float(mov.custo_total or 0)
+    custo_atual = float(os_obj.custo_total_pecas or 0) if hasattr(os_obj, "custo_total_pecas") else 0
+    if hasattr(os_obj, "custo_total_pecas"):
+        os_obj.custo_total_pecas = custo_atual + custo_mov
+
+    db.commit()
+
+    # Verifica ponto de pedido após baixa
+    from app.services.estoque_service import verificar_ponto_pedido
+    try:
+        verificar_ponto_pedido(db, peca, saldo.quantidade, str(user.organization_id), criar_notificacao)
+    except Exception:
+        pass
+
+    saldo_total = saldo_total_peca(db, str(peca.id), str(user.organization_id))
+
+    create_audit_log(
+        db, str(user.organization_id), str(user.id),
+        "estoque", str(peca.id), "consumo_os",
+        dados_novos=f'{{"os_id":"{os_id}","peca":"{peca.codigo}","qty":{data.quantidade},"custo":{custo_mov}}}',
+        ip=None,
+    )
+
+    return {
+        "movimento_id": str(mov.id),
+        "peca_id": str(peca.id),
+        "peca_codigo": peca.codigo,
+        "peca_descricao": peca.descricao,
+        "quantidade": data.quantidade,
+        "custo_unitario": float(mov.custo_unitario or 0),
+        "custo_total": custo_mov,
+        "saldo_atual": saldo_total,
+        "abaixo_ponto_pedido": saldo_total <= peca.ponto_pedido and peca.ponto_pedido > 0,
+    }
+
+
+# Endpoint: listar peças consumidas em uma OS
+@api_router.get("/ordens-servico/{os_id}/pecas")
+async def listar_pecas_da_os(
+    os_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Lista todas as peças consumidas em uma OS, com custo total."""
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada.")
+
+    from app.models.estoque import MovimentoEstoque, Peca, Deposito, TipoMovimento
+    movs = db.query(MovimentoEstoque).filter(
+        MovimentoEstoque.os_id == os_id,
+        MovimentoEstoque.organization_id == user.organization_id,
+        MovimentoEstoque.tipo == TipoMovimento.SAIDA,
+    ).order_by(MovimentoEstoque.criado_em).all()
+
+    total_custo = sum(float(m.custo_total or 0) for m in movs)
+    itens = []
+    for m in movs:
+        peca = m.peca
+        dep = m.deposito
+        itens.append({
+            "movimento_id": str(m.id),
+            "peca_id": str(m.peca_id),
+            "peca_codigo": peca.codigo if peca else "",
+            "peca_descricao": peca.descricao if peca else "",
+            "unidade": peca.unidade if peca else "un",
+            "deposito": dep.nome if dep else "",
+            "quantidade": m.quantidade,
+            "custo_unitario": float(m.custo_unitario or 0),
+            "custo_total": float(m.custo_total or 0),
+            "motivo": m.motivo,
+            "criado_em": m.criado_em.isoformat() if m.criado_em else None,
+        })
+
+    return {"itens": itens, "custo_total_pecas": total_custo}
+
 
 # ========== PLANOS PREVENTIVOS ENDPOINTS ==========
 @api_router.get("/planos-preventivos", response_model=List[PlanoResponse])
@@ -7053,6 +7214,14 @@ async def seed_demo_data(reset: bool = False, db: Session = Depends(get_db)):
 
 # Include router
 app.include_router(api_router)
+
+# ── Módulo de Almoxarifado — Fase 1 ──────────────────────────────────────────
+from app.routers.estoque import router as _estoque_router
+from app.routers.estoque import get_current_user_stub as _estoque_user_stub
+
+# Injeta o get_current_user real no router de estoque
+app.dependency_overrides[_estoque_user_stub] = get_current_user
+app.include_router(_estoque_router, prefix="/api")
 
 @app.get("/")
 async def root():
