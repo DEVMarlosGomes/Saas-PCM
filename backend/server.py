@@ -26,43 +26,53 @@ from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.dialects.postgresql import UUID
 import enum
 
+# ── Configuração centralizada (fail-fast em produção se vars ausentes) ─────
+from app.settings import settings
+
 ROOT_DIR = Path(__file__).parent
 
-# Database connection - Supabase PostgreSQL
-# Handle special characters in password
-DB_HOST = os.environ.get('DB_HOST', 'aws-1-sa-east-1.pooler.supabase.com')
-DB_PORT = os.environ.get('DB_PORT', '6543')
-DB_NAME = os.environ.get('POSTGRES_DB', 'postgres')
-DB_USER = os.environ.get('DB_USER', 'postgres.ehrfwytvchhrzywnutyf')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', '@Mgfj125256')
+# ── Banco de dados ────────────────────────────────────────────────────────────
+# DATABASE_URL vem de settings (obrigatório em produção).
+# Fallback para desenvolvimento local via vars individuais — nunca em produção.
+_database_url = settings.DATABASE_URL
+if not _database_url:
+    # Dev local apenas: monta URL a partir de vars individuais
+    _db_host = os.environ.get("DB_HOST", "localhost")
+    _db_port = os.environ.get("DB_PORT", "5432")
+    _db_name = os.environ.get("POSTGRES_DB", "postgres")
+    _db_user = os.environ.get("DB_USER", "postgres")
+    _db_password = os.environ.get("DB_PASSWORD", "")
+    _database_url = f"postgresql://{_db_user}:{quote_plus(_db_password)}@{_db_host}:{_db_port}/{_db_name}"
 
-# URL encode the password to handle special characters like @
-DATABASE_URL = os.environ.get('DATABASE_URL', '')
-if not DATABASE_URL:
-    encoded_password = quote_plus(DB_PASSWORD)
-    DATABASE_URL = f"postgresql://{DB_USER}:{encoded_password}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-
+DATABASE_URL = _database_url
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 database_initialized = False
 
-# JWT Configuration
-JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_hex(32))
-JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours for SaaS session
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+# ── JWT — configuração a partir de settings (segredo obrigatório) ─────────────
+JWT_SECRET = settings.JWT_SECRET
+if not JWT_SECRET:
+    # Dev: gera temporário e avisa; em produção settings já bloqueou no boot
+    JWT_SECRET = secrets.token_hex(32)
+    logging.getLogger(__name__).warning(
+        "JWT_SECRET não configurado! Usando valor temporário — tokens expiram ao reiniciar."
+    )
+JWT_ALGORITHM = settings.JWT_ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# ── Logging estruturado (JSON em produção) ────────────────────────────────────
+from app.middleware.logging_config import configure_logging
+configure_logging(is_production=settings.is_production)
 logger = logging.getLogger(__name__)
 
-# SMTP configuration (fail-silent email notifications)
-SMTP_HOST = os.environ.get("SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-SMTP_FROM = os.environ.get("SMTP_FROM", "noreply@aurix.com.br")
+# ── SMTP (fail-silent) ────────────────────────────────────────────────────────
+SMTP_HOST = settings.SMTP_HOST
+SMTP_PORT = settings.SMTP_PORT
+SMTP_USER = settings.SMTP_USER
+SMTP_PASSWORD = settings.SMTP_PASSWORD
+SMTP_FROM = settings.SMTP_FROM
 
 # ========== ENUMS ==========
 class UserRole(str, enum.Enum):
@@ -297,6 +307,8 @@ class OrdemServico(Base):
     downtime_start = Column(DateTime(timezone=True), nullable=True)          # início da parada
     occurrences = Column(Text, nullable=True)                                # JSON: log de ocorrências do operador
     technician_employee_id = Column(String(20), nullable=True)               # matrícula do técnico responsável
+    area_manutencao = Column(String(50), nullable=True)                      # área de manutenção requerida (eletrica, mecanica, ...)
+    subarea_manutencao = Column(String(80), nullable=True)                   # subárea específica (ex: motores, hidraulica, automacao_clp)
 
     # Review workflow
     review_deadline = Column(DateTime(timezone=True), nullable=True)
@@ -421,6 +433,18 @@ class OSEquipe(Base):
     adicionado_em = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     adicionado_por = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
+class Colaborador(Base):
+    __tablename__ = "colaboradores"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    nome = Column(String(200), nullable=False)
+    matricula = Column(String(30), nullable=False)
+    cargo = Column(String(100), nullable=True)
+    setor = Column(String(100), nullable=True)
+    ativo = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
     __table_args__ = (Index('idx_os_equipe_os', 'os_id'),)
 
 class OSHistorico(Base):
@@ -436,6 +460,18 @@ class OSHistorico(Base):
     user_nome = Column(String(200), nullable=True)
 
     __table_args__ = (Index('idx_os_historico_os', 'os_id'),)
+
+class OSExcecaoArea(Base):
+    """Crachás autorizados pelo líder/admin para atender OS fora da sua área."""
+    __tablename__ = "os_excecoes_area"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    os_id = Column(UUID(as_uuid=True), ForeignKey("ordens_servico.id", ondelete="CASCADE"), nullable=False)
+    matricula = Column(String(30), nullable=False)
+    colaborador_nome = Column(String(200), nullable=True)
+    autorizado_por_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    autorizado_por_nome = Column(String(200), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class Notificacao(Base):
     __tablename__ = "notificacoes"
@@ -642,6 +678,9 @@ class OSCreate(BaseModel):
     # Identificação do solicitante físico
     solicitante_cracha: Optional[str] = None
     solicitante_nome: Optional[str] = None
+    # Área e subárea de manutenção requeridas
+    area_manutencao: Optional[str] = None
+    subarea_manutencao: Optional[str] = None
 
 class OSUpdate(BaseModel):
     status: Optional[StatusOS] = None
@@ -655,6 +694,36 @@ class OSUpdate(BaseModel):
     # Relatório do técnico (obrigatório para transição → aguardando_revisao)
     relatorio_o_que_foi_realizado: Optional[str] = None
     relatorio_analise_problema: Optional[str] = None
+    # Matrícula do colaborador responsável pelo atendimento
+    matricula_tecnico: Optional[str] = None
+    # Área/setor do técnico (enviada pelo frontend no momento da aceitação)
+    area_tecnico: Optional[str] = None
+    # Área e subárea de manutenção (atualizável pelo admin/líder)
+    area_manutencao: Optional[str] = None
+    subarea_manutencao: Optional[str] = None
+
+class ColaboradorCreate(BaseModel):
+    nome: str
+    matricula: str
+    cargo: Optional[str] = None
+    setor: Optional[str] = None
+
+class ColaboradorUpdate(BaseModel):
+    nome: Optional[str] = None
+    matricula: Optional[str] = None
+    cargo: Optional[str] = None
+    setor: Optional[str] = None
+    ativo: Optional[bool] = None
+
+class ColaboradorResponse(BaseModel):
+    id: str
+    nome: str
+    matricula: str
+    cargo: Optional[str] = None
+    setor: Optional[str] = None
+    ativo: bool
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 class OSHistoricoResponse(BaseModel):
     id: str
@@ -724,7 +793,20 @@ class OSResponse(BaseModel):
     custo_mao_obra: Optional[float] = None
     horas_trabalhadas: Optional[float] = None
     valor_hora_tecnico: Optional[float] = None
+    # Área e subárea de manutenção requeridas
+    area_manutencao: Optional[str] = None
+    subarea_manutencao: Optional[str] = None
+    excecoes_area_matriculas: List[str] = []
 
+    model_config = ConfigDict(from_attributes=True)
+
+class OSExcecaoAreaResponse(BaseModel):
+    id: str
+    os_id: str
+    matricula: str
+    colaborador_nome: Optional[str] = None
+    autorizado_por_nome: Optional[str] = None
+    created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
 class OSEquipeCreate(BaseModel):
@@ -908,6 +990,33 @@ def ensure_database_schema():
             "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'engenheiro_manutencao'",
             "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'lider_producao'",
             "ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'supervisor_producao'",
+            # Colaboradores — registro de técnicos de manutenção
+            """CREATE TABLE IF NOT EXISTS colaboradores (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                nome VARCHAR(200) NOT NULL,
+                matricula VARCHAR(30) NOT NULL,
+                cargo VARCHAR(100),
+                setor VARCHAR(100),
+                ativo BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMPTZ DEFAULT now()
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_colaboradores_org ON colaboradores (organization_id)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_colaboradores_org_matricula ON colaboradores (organization_id, matricula) WHERE ativo = TRUE",
+            # Spec v7 — área de manutenção por OS + subárea + autorizações de área
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS area_manutencao VARCHAR(50)",
+            "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS subarea_manutencao VARCHAR(80)",
+            """CREATE TABLE IF NOT EXISTS os_excecoes_area (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                os_id UUID NOT NULL REFERENCES ordens_servico(id) ON DELETE CASCADE,
+                matricula VARCHAR(30) NOT NULL,
+                colaborador_nome VARCHAR(200),
+                autorizado_por_id UUID REFERENCES users(id),
+                autorizado_por_nome VARCHAR(200),
+                created_at TIMESTAMPTZ DEFAULT now(),
+                UNIQUE(os_id, matricula)
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_os_excecoes_area_os ON os_excecoes_area (os_id)",
         ]
         try:
             from sqlalchemy import text as sa_text
@@ -980,25 +1089,25 @@ def create_refresh_token(user_id: str) -> str:
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
-    # Use secure=True and samesite="none" for cross-origin HTTPS
-    is_production = os.environ.get("FRONTEND_URL", "").startswith("https")
+    # secure=True sempre em produção; samesite=strict no refresh (mitiga CSRF)
+    _prod = settings.is_production
     response.set_cookie(
-        key="access_token", 
-        value=access_token, 
-        httponly=True, 
-        secure=is_production, 
-        samesite="none" if is_production else "lax", 
-        max_age=900, 
-        path="/"
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=_prod,
+        samesite="strict" if _prod else "lax",
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        path="/",
     )
     response.set_cookie(
-        key="refresh_token", 
-        value=refresh_token, 
-        httponly=True, 
-        secure=is_production, 
-        samesite="none" if is_production else "lax", 
-        max_age=604800, 
-        path="/"
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=_prod,
+        samesite="strict",   # sempre strict — refresh nunca é cross-site legítimo
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/api/auth/refresh",  # path restrito reduz superfície de ataque
     )
 
 async def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -1410,7 +1519,33 @@ def clear_failed_attempts(db: Session, identifier: str):
     db.query(LoginAttempt).filter(LoginAttempt.identifier == identifier).delete()
     db.commit()
 
-def create_audit_log(db: Session, org_id: str, user_id: str, entidade: str, entidade_id: str, acao: str, dados_anteriores: str = None, dados_novos: str = None):
+def create_audit_log(
+    db: Session,
+    org_id: str,
+    user_id: str,
+    entidade: str,
+    entidade_id: str,
+    acao: str,
+    dados_anteriores: str = None,
+    dados_novos: str = None,
+    ip: str | None = None,
+    user_agent: str | None = None,
+) -> None:
+    import json as _json
+    # Enriquece dados_novos com metadados de auditoria (sem alterar schema da tabela)
+    _meta: dict = {}
+    if ip:
+        _meta["_ip"] = ip
+    if user_agent:
+        _meta["_ua"] = user_agent[:200]   # trunca user-agent longo
+    if _meta:
+        try:
+            _existing = _json.loads(dados_novos) if dados_novos else {}
+            _existing.update(_meta)
+            dados_novos = _json.dumps(_existing, ensure_ascii=False)
+        except Exception:
+            pass   # dados_novos não é JSON — mantém original
+
     log = AuditoriaLog(
         organization_id=org_id,
         user_id=user_id,
@@ -1418,10 +1553,14 @@ def create_audit_log(db: Session, org_id: str, user_id: str, entidade: str, enti
         entidade_id=entidade_id,
         acao=acao,
         dados_anteriores=dados_anteriores,
-        dados_novos=dados_novos
+        dados_novos=dados_novos,
     )
     db.add(log)
     db.commit()
+    logger.info(
+        "[AUDIT] org=%s user=%s acao=%s entidade=%s id=%s ip=%s",
+        org_id, user_id, acao, entidade, entidade_id, ip or "—",
+    )
 
 def get_next_os_number(db: Session, org_id: str) -> int:
     last_os = db.query(OrdemServico).filter(OrdemServico.organization_id == org_id).order_by(OrdemServico.numero.desc()).first()
@@ -1517,6 +1656,16 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
         if tec:
             tecnico_nome = tec.nome
             tecnico_emp_id = tec.employee_id
+    # Fallback: busca nome via colaborador pela matrícula registrada
+    _tech_emp = getattr(o, "technician_employee_id", None)
+    if not tecnico_nome and _tech_emp:
+        col = db.query(Colaborador).filter(
+            Colaborador.organization_id == o.organization_id,
+            Colaborador.matricula == _tech_emp,
+        ).first()
+        if col:
+            tecnico_nome = col.nome
+            tecnico_emp_id = col.matricula
 
     revisor_nome = None
     if o.revisor_id:
@@ -1553,6 +1702,14 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
                 custo_parada = None
         else:
             custo_parada = None
+
+    # Excecoes de área (matriculas autorizadas para esta OS)
+    _excecoes_matriculas = []
+    try:
+        _exc_rows = db.query(OSExcecaoArea).filter(OSExcecaoArea.os_id == o.id).all()
+        _excecoes_matriculas = [e.matricula for e in _exc_rows]
+    except Exception:
+        pass
 
     return OSResponse(
         id=str(o.id), numero=o.numero, equipamento_id=str(o.equipamento_id),
@@ -1599,7 +1756,72 @@ def build_os_response(o, db: Session, user=None) -> OSResponse:
         custo_mao_obra=getattr(o, 'custo_mao_obra', None),
         horas_trabalhadas=getattr(o, 'horas_trabalhadas', None),
         valor_hora_tecnico=getattr(o, 'valor_hora_tecnico', None),
+        area_manutencao=getattr(o, 'area_manutencao', None),
+        subarea_manutencao=getattr(o, 'subarea_manutencao', None),
+        excecoes_area_matriculas=_excecoes_matriculas,
     )
+
+AREAS_MANUTENCAO_LABEL = {
+    "eletrica":       "Elétrica",
+    "mecanica":       "Mecânica",
+    "hidraulica":     "Hidráulica",
+    "pneumatica":     "Pneumática",
+    "instrumentacao": "Instrumentação",
+    "civil":          "Civil",
+    "utilidades":     "Utilidades",
+    "predial":        "Predial",
+    "geral":          "Geral",
+}
+
+_AREAS_KEYWORDS: dict = {
+    "eletrica":       ["eletric", "electr"],
+    "mecanica":       ["mecanic", "mechan"],
+    "hidraulica":     ["hidraul", "hydraul"],
+    "pneumatica":     ["pneumat"],
+    "instrumentacao": ["instrument"],
+    "civil":          ["civil"],
+    "utilidades":     ["utilidad"],
+    "predial":        ["predial"],
+    "geral":          [],
+}
+
+_AREA_REVISOR_ROLE = {
+    "eletrica": "LIDER_MANUTENCAO_ELETRICA",
+    "mecanica": "LIDER_MANUTENCAO_MECANICA",
+}
+
+def _get_revisor_para_area(db, org_id, area: str | None):
+    """Retorna o líder adequado para revisar uma OS da área informada."""
+    role_str = _AREA_REVISOR_ROLE.get(area or "")
+    if role_str:
+        role_enum = getattr(UserRole, role_str, None)
+        if role_enum:
+            lider = db.query(User).filter(
+                User.organization_id == org_id,
+                User.role == role_enum,
+                User.ativo == True,
+            ).first()
+            if lider:
+                return lider
+    # Fallback: líder genérico
+    return db.query(User).filter(
+        User.organization_id == org_id,
+        User.role == UserRole.LIDER,
+        User.ativo == True,
+    ).first()
+
+def _area_compativel(area_os: str, setor: str, cargo: str) -> bool:
+    """Retorna True se o colaborador (setor/cargo) é compatível com a área requerida pela OS."""
+    if not area_os or area_os == "geral":
+        return True
+    import unicodedata
+    def _norm(s: str) -> str:
+        return ''.join(c for c in unicodedata.normalize('NFD', s.lower()) if unicodedata.category(c) != 'Mn')
+    keywords = _AREAS_KEYWORDS.get(area_os, [])
+    if not keywords:
+        return True
+    haystack = _norm(f"{setor} {cargo}")
+    return any(_norm(kw) in haystack for kw in keywords)
 
 def calculate_sla(prioridade: PrioridadeOS, tempo_resposta: int) -> bool:
     sla_map = {
@@ -1632,9 +1854,9 @@ _ETAPAS_LABEL = {
     "cancelada":          "OS cancelada",
 }
 
-def record_os_historico(db: Session, os_id, status_novo: str, user_id=None, user_nome: str = None, timestamp=None):
+def record_os_historico(db: Session, os_id, status_novo: str, user_id=None, user_nome: str = None, timestamp=None, custom_label: str = None):
     """Registra uma etapa de transição no histórico da OS."""
-    label = _ETAPAS_LABEL.get(status_novo, status_novo)
+    label = custom_label or _ETAPAS_LABEL.get(status_novo, status_novo)
     entry = OSHistorico(
         os_id=os_id,
         status_novo=status_novo,
@@ -1649,21 +1871,37 @@ def record_os_historico(db: Session, os_id, status_novo: str, user_id=None, user
 app = FastAPI(title="AURIX — Tecnologia para a Gestão Industrial", version="2.0.0")
 api_router = APIRouter(prefix="/api")
 
-# CORS
-frontend_url = os.environ.get("FRONTEND_URL", os.environ.get("CORS_ORIGINS", "*"))
-origins = frontend_url.split(",") if frontend_url != "*" else ["*"]
-
+# ── CORS — nunca wildcard com credentials (ASVS V14.4) ───────────────────────
+_cors_origins = settings.cors_origins   # lista explícita a partir de FRONTEND_URL
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
 )
+
+# ── Security headers (HSTS, CSP, X-Frame, etc.) ──────────────────────────────
+from app.middleware.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+# ── Rate limiting (slowapi) ───────────────────────────────────────────────────
+from app.middleware.rate_limiter import (
+    limiter, rate_limit_exceeded_handler,
+    LIMIT_AUTH, LIMIT_BILLING, LIMIT_IOT, LIMIT_APIKEY, LIMIT_STRICT,
+)
+from slowapi.errors import RateLimitExceeded
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# ── Tenant isolation logging ──────────────────────────────────────────────────
+from app.middleware.tenant import TenantIsolationMiddleware
+app.add_middleware(TenantIsolationMiddleware)
 
 # ========== AUTH ENDPOINTS ==========
 @api_router.post("/auth/register")
-async def register(data: UserRegister, response: Response, db: Session = Depends(get_db)):
+@limiter.limit(LIMIT_AUTH)
+async def register(data: UserRegister, request: Request, response: Response, db: Session = Depends(get_db)):
     email = data.email.lower()
     existing = db.query(User).filter(User.email == email).first()
     if existing:
@@ -1727,11 +1965,19 @@ async def login(data: UserLogin, request: Request, response: Response, db: Sessi
         raise HTTPException(status_code=403, detail="Usuário desativado")
     
     clear_failed_attempts(db, identifier)
-    
+
     access_token = create_access_token(str(user.id), user.email)
     refresh_token = create_refresh_token(str(user.id))
     set_auth_cookies(response, access_token, refresh_token)
-    
+
+    _login_ip = request.headers.get("X-Forwarded-For", ip).split(",")[0].strip()
+    create_audit_log(
+        db, str(user.organization_id), str(user.id), "user", str(user.id),
+        "login",
+        ip=_login_ip,
+        user_agent=request.headers.get("User-Agent"),
+    )
+
     return {
         "id": str(user.id),
         "email": user.email,
@@ -1807,15 +2053,15 @@ async def refresh_token(request: Request, response: Response, db: Session = Depe
         if not user:
             raise HTTPException(status_code=401, detail="Usuário não encontrado")
         access_token = create_access_token(str(user.id), user.email)
-        is_production = os.environ.get("FRONTEND_URL", "").startswith("https")
+        _prod = settings.is_production
         response.set_cookie(
-            key="access_token", 
-            value=access_token, 
-            httponly=True, 
-            secure=is_production, 
-            samesite="none" if is_production else "lax", 
-            max_age=900, 
-            path="/"
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=_prod,
+            samesite="strict" if _prod else "lax",
+            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            path="/",
         )
         return {"message": "Token atualizado", "access_token": access_token}
     except jwt.ExpiredSignatureError:
@@ -2133,6 +2379,99 @@ async def deactivate_user(user_id: str, user: User = Depends(get_current_user), 
     
     return {"message": "Usuário desativado com sucesso"}
 
+# ========== COLABORADORES ENDPOINTS ==========
+
+@api_router.get("/colaboradores/lookup")
+async def lookup_colaborador(matricula: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    col = db.query(Colaborador).filter(
+        Colaborador.organization_id == user.organization_id,
+        Colaborador.matricula == matricula,
+        Colaborador.ativo == True,
+    ).first()
+    if col:
+        return {"encontrado": True, "id": str(col.id), "nome": col.nome, "cargo": col.cargo, "setor": col.setor}
+    return {"encontrado": False, "id": None, "nome": None, "cargo": None, "setor": None}
+
+@api_router.get("/colaboradores", response_model=List[ColaboradorResponse])
+async def list_colaboradores(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+    cols = db.query(Colaborador).filter(
+        Colaborador.organization_id == user.organization_id,
+    ).order_by(Colaborador.nome).all()
+    return [ColaboradorResponse(
+        id=str(c.id), nome=c.nome, matricula=c.matricula,
+        cargo=c.cargo, setor=c.setor, ativo=c.ativo, created_at=c.created_at,
+    ) for c in cols]
+
+@api_router.post("/colaboradores", response_model=ColaboradorResponse, status_code=201)
+async def create_colaborador(data: ColaboradorCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode cadastrar colaboradores")
+    existing = db.query(Colaborador).filter(
+        Colaborador.organization_id == user.organization_id,
+        Colaborador.matricula == data.matricula,
+        Colaborador.ativo == True,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Já existe um colaborador ativo com esta matrícula")
+    col = Colaborador(
+        organization_id=user.organization_id,
+        nome=data.nome,
+        matricula=data.matricula,
+        cargo=data.cargo,
+        setor=data.setor,
+    )
+    db.add(col)
+    db.commit()
+    db.refresh(col)
+    return ColaboradorResponse(
+        id=str(col.id), nome=col.nome, matricula=col.matricula,
+        cargo=col.cargo, setor=col.setor, ativo=col.ativo, created_at=col.created_at,
+    )
+
+@api_router.put("/colaboradores/{col_id}", response_model=ColaboradorResponse)
+async def update_colaborador(col_id: str, data: ColaboradorUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode editar colaboradores")
+    col = db.query(Colaborador).filter(
+        Colaborador.id == col_id,
+        Colaborador.organization_id == user.organization_id,
+    ).first()
+    if not col:
+        raise HTTPException(status_code=404, detail="Colaborador não encontrado")
+    if data.matricula and data.matricula != col.matricula:
+        dup = db.query(Colaborador).filter(
+            Colaborador.organization_id == user.organization_id,
+            Colaborador.matricula == data.matricula,
+            Colaborador.ativo == True,
+            Colaborador.id != col.id,
+        ).first()
+        if dup:
+            raise HTTPException(status_code=400, detail="Já existe um colaborador ativo com esta matrícula")
+    for field, val in data.model_dump(exclude_none=True).items():
+        setattr(col, field, val)
+    db.commit()
+    db.refresh(col)
+    return ColaboradorResponse(
+        id=str(col.id), nome=col.nome, matricula=col.matricula,
+        cargo=col.cargo, setor=col.setor, ativo=col.ativo, created_at=col.created_at,
+    )
+
+@api_router.delete("/colaboradores/{col_id}")
+async def delete_colaborador(col_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Apenas admin pode excluir colaboradores")
+    col = db.query(Colaborador).filter(
+        Colaborador.id == col_id,
+        Colaborador.organization_id == user.organization_id,
+    ).first()
+    if not col:
+        raise HTTPException(status_code=404, detail="Colaborador não encontrado")
+    col.ativo = False
+    db.commit()
+    return {"ok": True}
+
 # ========== ORGANIZATION SETTINGS ==========
 class OrganizationUpdate(BaseModel):
     nome: Optional[str] = None
@@ -2208,7 +2547,8 @@ async def update_organization(data: OrganizationUpdate, user: User = Depends(get
 # ========== API KEY MANAGEMENT ==========
 
 @api_router.post("/organization/generate-api-key")
-async def generate_api_key(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@limiter.limit(LIMIT_APIKEY)
+async def generate_api_key(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Generate (or regenerate) API key for the organization. Admin only."""
     if user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Apenas admin pode gerenciar API keys")
@@ -2747,6 +3087,8 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
         falha_modo=data.falha_modo,
         falha_causa=data.falha_causa,
         failure_group=data.failure_group,
+        area_manutencao=data.area_manutencao or None,
+        subarea_manutencao=data.subarea_manutencao or None,
         solicitante_id=user.id,
         organization_id=user.organization_id,
         downtime_start=now,
@@ -2792,6 +3134,7 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
         os.status = data.status
         
         # Handle status transitions
+        _aceitacao_label = None  # label customizado para o histórico de aceitação
         if data.status == StatusOS.EM_ATENDIMENTO and old_status == StatusOS.ABERTA:
             os.inicio_atendimento = now
             os.tempo_resposta = int((now - os.created_at).total_seconds() / 60)
@@ -2800,8 +3143,42 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
                 os.tecnico_id = data.tecnico_id
             elif user.role in [UserRole.TECNICO, UserRole.LIDER]:
                 os.tecnico_id = user.id
-            # Registrar matrícula do técnico
-            if user.role == UserRole.TECNICO and user.employee_id:
+            # Registrar matrícula do técnico (via colaborador ou do próprio usuário)
+            if data.matricula_tecnico:
+                # Lookup colaborador para validação de área e label
+                _col = db.query(Colaborador).filter(
+                    Colaborador.organization_id == user.organization_id,
+                    Colaborador.matricula == data.matricula_tecnico,
+                    Colaborador.ativo == True,
+                ).first()
+                if _col:
+                    # ── Validação de área de manutenção ──────────────────────────
+                    _area_os = getattr(os, 'area_manutencao', None)
+                    if _area_os and _area_os != 'geral':
+                        _excecao_area = db.query(OSExcecaoArea).filter(
+                            OSExcecaoArea.os_id == os.id,
+                            OSExcecaoArea.matricula == data.matricula_tecnico,
+                        ).first()
+                        if not _excecao_area and not _area_compativel(_area_os, _col.setor or '', _col.cargo or ''):
+                            raise HTTPException(
+                                status_code=403,
+                                detail={
+                                    "error": "area_incompativel",
+                                    "area_os": _area_os,
+                                    "area_os_label": AREAS_MANUTENCAO_LABEL.get(_area_os, _area_os),
+                                    "area_tecnico": _col.setor or _col.cargo or "",
+                                    "mensagem": (
+                                        f"Esta OS é de manutenção {AREAS_MANUTENCAO_LABEL.get(_area_os, _area_os)}. "
+                                        f"Solicite ao líder técnico ou admin para autorizar seu crachá nesta OS."
+                                    ),
+                                }
+                            )
+                    # ── Monta label rico de aceitação ────────────────────────────
+                    _area = data.area_tecnico or _col.setor or _col.cargo or "Manutenção"
+                    _hora = now.strftime("%H:%M")
+                    _aceitacao_label = f"Aceito por {_col.nome} · {_area} · {_hora}"
+                os.technician_employee_id = data.matricula_tecnico
+            elif user.role == UserRole.TECNICO and user.employee_id:
                 os.technician_employee_id = user.employee_id
 
         elif data.status == StatusOS.AGUARDANDO_PECA and old_status == StatusOS.EM_ATENDIMENTO:
@@ -2854,33 +3231,49 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
             os.valor_hora_tecnico = _vh_tec
             os.custo_mao_obra = round(_custo_mo, 2)
             
-            # Auto-assign leader as reviewer
-            leader = db.query(User).filter(
-                User.organization_id == user.organization_id,
-                User.role == UserRole.LIDER,
-                User.ativo == True
-            ).first()
+            # Auto-assign leader as reviewer — roteado pela área da OS
+            _area_os_rev = getattr(os, 'area_manutencao', None)
+            leader = _get_revisor_para_area(db, user.organization_id, _area_os_rev)
             if leader:
                 os.revisor_id = leader.id
                 changes["revisor_auto_atribuido"] = leader.nome
+                _area_label_rev = AREAS_MANUTENCAO_LABEL.get(_area_os_rev or "", "")
+                _area_txt = f" ({_area_label_rev})" if _area_label_rev else ""
                 criar_notificacao(
                     db, org_id=os.organization_id, destinatario_id=leader.id,
                     tipo="revisao_pendente",
-                    titulo=f"OS #{os.numero} aguarda sua revisão",
+                    titulo=f"OS #{os.numero}{_area_txt} aguarda sua revisão",
                     mensagem=f"A OS #{os.numero} foi concluída e aguarda revisão. Prazo: 24 horas.",
                     os_id=os.id,
                 )
                 if org:
                     send_email_notification(
                         db, org, leader.id,
-                        f"OS #{os.numero} aguarda sua revisão",
-                        f"<p>A OS <strong>#{os.numero}</strong> foi concluída e aguarda sua revisão.</p><p>Prazo: 24 horas.</p>",
+                        f"OS #{os.numero}{_area_txt} aguarda sua revisão",
+                        f"<p>A OS <strong>#{os.numero}</strong>{_area_txt} foi concluída e aguarda sua revisão.</p><p>Prazo: 24 horas.</p>",
                     )
 
             # Set 24h review deadline
             os.review_deadline = now + timedelta(hours=24)
 
         elif data.status == StatusOS.REVISADA:
+            # ── Validação de área para revisão ──────────────────────────────
+            _area_rev = getattr(os, 'area_manutencao', None)
+            _ROLES_REVISAO_GERAL = [UserRole.ADMIN, UserRole.LIDER]
+            if user.role == UserRole.LIDER_MANUTENCAO_ELETRICA:
+                if _area_rev != "eletrica":
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Líder da Elétrica só pode revisar OS da área Elétrica."
+                    )
+            elif user.role == UserRole.LIDER_MANUTENCAO_MECANICA:
+                if _area_rev != "mecanica":
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Líder da Mecânica só pode revisar OS da área Mecânica."
+                    )
+            elif user.role not in _ROLES_REVISAO_GERAL:
+                raise HTTPException(status_code=403, detail="Sem permissão para revisar esta OS.")
             os.revisado_at = now
             os.revisor_id = user.id
             criar_notificacao(
@@ -2938,13 +3331,22 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
     if data.review_notes:
         os.review_notes = data.review_notes
         changes["review_notes"] = data.review_notes
-    
+    if data.area_manutencao is not None:
+        os.area_manutencao = data.area_manutencao or None
+    if data.subarea_manutencao is not None:
+        os.subarea_manutencao = data.subarea_manutencao or None
+
     db.commit()
     db.refresh(os)
 
     # Grava entrada no histórico se houve mudança de status
     if data.status:
-        record_os_historico(db, os.id, data.status.value, user_id=user.id, user_nome=user.nome, timestamp=now)
+        record_os_historico(
+            db, os.id, data.status.value,
+            user_id=user.id, user_nome=user.nome,
+            timestamp=now,
+            custom_label=_aceitacao_label if data.status == StatusOS.EM_ATENDIMENTO else None,
+        )
         db.commit()
 
     # Enhanced audit log with field changes
@@ -2955,6 +3357,187 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
     )
 
     return build_os_response(os, db, user=user)
+
+class OSReatribuirRequest(BaseModel):
+    nova_matricula: str
+    motivo: Optional[str] = None
+
+@api_router.patch("/ordens-servico/{os_id}/reassinar", response_model=OSResponse)
+async def reassinar_tecnico(
+    os_id: str,
+    data: OSReatribuirRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Admin/líder reatribui o técnico responsável por uma OS já em atendimento."""
+    if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
+        raise HTTPException(status_code=403, detail="Apenas admin ou líder podem reatribuir técnicos")
+
+    os = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+
+    if os.status not in [StatusOS.ABERTA, StatusOS.EM_ATENDIMENTO, StatusOS.AGUARDANDO_PECA]:
+        raise HTTPException(status_code=400, detail="Só é possível reatribuir OS abertas ou em atendimento")
+
+    # Lookup do novo colaborador
+    novo_col = db.query(Colaborador).filter(
+        Colaborador.organization_id == user.organization_id,
+        Colaborador.matricula == data.nova_matricula.strip(),
+        Colaborador.ativo == True,
+    ).first()
+    if not novo_col:
+        raise HTTPException(status_code=404, detail="Matrícula não encontrada no cadastro de colaboradores")
+
+    now = datetime.now(timezone.utc)
+    area = novo_col.setor or novo_col.cargo or "Manutenção"
+    hora = now.strftime("%H:%M")
+
+    # Registrar técnico anterior para o label
+    tecnico_anterior = os.technician_employee_id or "—"
+
+    # Atualizar OS
+    os.technician_employee_id = data.nova_matricula.strip()
+    os.tecnico_id = None  # desvincula usuário anterior (referência interna)
+    if os.status == StatusOS.ABERTA:
+        os.inicio_atendimento = now
+        os.tempo_resposta = int((now - os.created_at).total_seconds() / 60)
+        os.dentro_sla = calculate_sla(os.prioridade, os.tempo_resposta)
+        os.status = StatusOS.EM_ATENDIMENTO
+
+    db.commit()
+
+    # Histórico da reatribuição
+    motivo_txt = f" · Motivo: {data.motivo.strip()}" if data.motivo and data.motivo.strip() else ""
+    label_reatrib = f"Reatribuído para {novo_col.nome} · {area} · por {user.nome} às {hora}{motivo_txt}"
+    record_os_historico(
+        db, os.id, os.status.value,
+        user_id=user.id, user_nome=user.nome,
+        timestamp=now, custom_label=label_reatrib,
+    )
+    db.commit()
+    db.refresh(os)
+
+    create_audit_log(db, str(user.organization_id), str(user.id), "ordem_servico", str(os.id), "reassign")
+
+    return build_os_response(os, db, user=user)
+
+@api_router.get("/ordens-servico/{os_id}/excecoes-area", response_model=List[OSExcecaoAreaResponse])
+async def list_excecoes_area(
+    os_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Lista os crachás autorizados pelo líder/admin para atender esta OS fora da área."""
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+    rows = db.query(OSExcecaoArea).filter(OSExcecaoArea.os_id == os_obj.id).order_by(OSExcecaoArea.created_at).all()
+    return [OSExcecaoAreaResponse(
+        id=str(r.id), os_id=str(r.os_id), matricula=r.matricula,
+        colaborador_nome=r.colaborador_nome, autorizado_por_nome=r.autorizado_por_nome,
+        created_at=r.created_at,
+    ) for r in rows]
+
+
+class _ExcecaoAreaCreate(BaseModel):
+    matricula: str
+
+@api_router.post("/ordens-servico/{os_id}/excecoes-area", response_model=OSExcecaoAreaResponse)
+async def add_excecao_area(
+    os_id: str,
+    data: _ExcecaoAreaCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Admin/líder autoriza um crachá para atender esta OS fora da sua área habitual."""
+    if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
+        raise HTTPException(status_code=403, detail="Apenas admin ou líder podem adicionar autorizações de área")
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+
+    # Lookup colaborador
+    col = db.query(Colaborador).filter(
+        Colaborador.organization_id == user.organization_id,
+        Colaborador.matricula == data.matricula.strip(),
+        Colaborador.ativo == True,
+    ).first()
+    if not col:
+        raise HTTPException(status_code=404, detail="Matrícula não encontrada no cadastro de colaboradores")
+
+    # Evita duplicata
+    existing = db.query(OSExcecaoArea).filter(
+        OSExcecaoArea.os_id == os_obj.id,
+        OSExcecaoArea.matricula == data.matricula.strip(),
+    ).first()
+    if existing:
+        return OSExcecaoAreaResponse(
+            id=str(existing.id), os_id=str(existing.os_id), matricula=existing.matricula,
+            colaborador_nome=existing.colaborador_nome, autorizado_por_nome=existing.autorizado_por_nome,
+            created_at=existing.created_at,
+        )
+
+    excecao = OSExcecaoArea(
+        os_id=os_obj.id,
+        matricula=data.matricula.strip(),
+        colaborador_nome=col.nome,
+        autorizado_por_id=user.id,
+        autorizado_por_nome=user.nome,
+    )
+    db.add(excecao)
+    db.commit()
+    db.refresh(excecao)
+
+    record_os_historico(
+        db, os_obj.id, os_obj.status.value,
+        user_id=user.id, user_nome=user.nome,
+        timestamp=datetime.now(timezone.utc),
+        custom_label=f"Autorizado por {user.nome}: {col.nome} ({data.matricula.strip()}) poderá atender esta OS",
+    )
+    db.commit()
+
+    return OSExcecaoAreaResponse(
+        id=str(excecao.id), os_id=str(excecao.os_id), matricula=excecao.matricula,
+        colaborador_nome=excecao.colaborador_nome, autorizado_por_nome=excecao.autorizado_por_nome,
+        created_at=excecao.created_at,
+    )
+
+
+@api_router.delete("/ordens-servico/{os_id}/excecoes-area/{matricula}")
+async def remove_excecao_area(
+    os_id: str,
+    matricula: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Admin/líder remove autorização de área de um crachá."""
+    if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
+        raise HTTPException(status_code=403, detail="Apenas admin ou líder podem remover autorizações de área")
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+    row = db.query(OSExcecaoArea).filter(
+        OSExcecaoArea.os_id == os_obj.id,
+        OSExcecaoArea.matricula == matricula,
+    ).first()
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok": True}
+
 
 @api_router.post("/ordens-servico/auto-approve")
 async def auto_approve_expired_reviews(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -2992,9 +3575,13 @@ async def get_pending_reviews(user: User = Depends(get_current_user), db: Sessio
         OrdemServico.status == StatusOS.AGUARDANDO_REVISAO
     )
     
-    # Leaders see OS assigned to them for review
+    # Filtro por role — cada líder vê apenas OS da sua área
     if user.role == UserRole.LIDER:
         query = query.filter(OrdemServico.revisor_id == user.id)
+    elif user.role == UserRole.LIDER_MANUTENCAO_ELETRICA:
+        query = query.filter(OrdemServico.area_manutencao == "eletrica")
+    elif user.role == UserRole.LIDER_MANUTENCAO_MECANICA:
+        query = query.filter(OrdemServico.area_manutencao == "mecanica")
     elif user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Acesso negado")
     
@@ -3673,10 +4260,11 @@ async def get_dashboard_operador(
     """
     from sqlalchemy import func as _func, text as _sa_text
 
-    if user.role not in (UserRole.OPERADOR, UserRole.TECNICO):
+    _ROLES_OP_DASH = {UserRole.OPERADOR, UserRole.TECNICO, UserRole.LIDER_PRODUCAO, UserRole.SUPERVISOR_PRODUCAO}
+    if user.role not in _ROLES_OP_DASH:
         raise HTTPException(status_code=403, detail="Acesso restrito a operadores e técnicos.")
 
-    setor_nome = user.setor or (user.generic_session_sector if user.role == UserRole.TECNICO else None)
+    setor_nome = user.setor or user.generic_session_sector
     if not setor_nome:
         raise HTTPException(status_code=400, detail="Usuário sem setor definido. Configure o setor no perfil.")
 
@@ -3774,13 +4362,19 @@ async def get_dashboard_lider(
     """
     from sqlalchemy import func as _func
 
-    if user.role not in (UserRole.LIDER, UserRole.ADMIN, UserRole.SUPERUSUARIO):
+    _ROLES_LIDER_DASH = {
+        UserRole.LIDER, UserRole.ADMIN, UserRole.SUPERUSUARIO,
+        UserRole.LIDER_MANUTENCAO_ELETRICA, UserRole.LIDER_MANUTENCAO_MECANICA,
+        UserRole.SUPERVISOR_MANUTENCAO, UserRole.ANALISTA_MANUTENCAO,
+        UserRole.ENGENHEIRO_MANUTENCAO, UserRole.GERENTE_INDUSTRIAL,
+    }
+    if user.role not in _ROLES_LIDER_DASH:
         raise HTTPException(status_code=403, detail="Acesso restrito a líderes e administradores.")
 
     now = datetime.now(timezone.utc)
     first_day_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    # Escopo: LIDER filtra pelo setor; ADMIN/SUPER vê tudo
+    # Escopo: LIDER com setor filtra por setor; todos os outros veem a organização inteira
     equip_ids = None
     setor_nome = None
     setor_id = None
@@ -4049,22 +4643,140 @@ async def list_auditoria(
 ):
     if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
         raise HTTPException(status_code=403, detail="Acesso negado")
-    
+
     query = db.query(AuditoriaLog).filter(AuditoriaLog.organization_id == user.organization_id)
     if entidade:
         query = query.filter(AuditoriaLog.entidade == entidade)
-    
+
     logs = query.order_by(AuditoriaLog.created_at.desc()).limit(limit).all()
-    
+
+    user_cache = {}
+    def _get_user_nome(uid):
+        if not uid: return None
+        key = str(uid)
+        if key not in user_cache:
+            u = db.query(User).filter(User.id == uid).first()
+            user_cache[key] = u.nome if u else None
+        return user_cache[key]
+
     return [{
         "id": str(l.id),
         "user_id": str(l.user_id) if l.user_id else None,
+        "user_nome": _get_user_nome(l.user_id),
         "entidade": l.entidade,
         "entidade_id": str(l.entidade_id),
         "acao": l.acao,
         "dados_novos": l.dados_novos,
+        "dados_anteriores": l.dados_anteriores,
         "created_at": l.created_at.isoformat()
     } for l in logs]
+
+
+@api_router.get("/auditoria/os/{os_id}")
+async def get_os_audit_dossier(os_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Dossier completo de auditoria de uma OS: timeline, custos, equipe, notificações, logs."""
+    if user.role not in [UserRole.ADMIN, UserRole.LIDER]:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+    os_obj = db.query(OrdemServico).filter(
+        OrdemServico.id == os_id,
+        OrdemServico.organization_id == user.organization_id,
+    ).first()
+    if not os_obj:
+        raise HTTPException(status_code=404, detail="OS não encontrada")
+
+    # ── OS completa ──────────────────────────────────────────────────────────
+    os_data = build_os_response(os_obj, db, user=user)
+
+    # ── Histórico de status ──────────────────────────────────────────────────
+    historico = db.query(OSHistorico).filter(
+        OSHistorico.os_id == os_id
+    ).order_by(OSHistorico.timestamp.asc()).all()
+    historico_data = [{
+        "id": str(h.id),
+        "status_novo": h.status_novo,
+        "etapa_label": h.etapa_label,
+        "timestamp": h.timestamp.isoformat(),
+        "user_id": str(h.user_id) if h.user_id else None,
+        "user_nome": h.user_nome,
+    } for h in historico]
+
+    # ── Custos ───────────────────────────────────────────────────────────────
+    custos = db.query(CustoOS).filter(
+        CustoOS.ordem_servico_id == os_id,
+        CustoOS.organization_id == user.organization_id,
+    ).order_by(CustoOS.created_at.asc()).all()
+    _usr_cache: dict = {}
+    def _nome(uid):
+        if not uid: return None
+        k = str(uid)
+        if k not in _usr_cache:
+            u = db.query(User).filter(User.id == uid).first()
+            _usr_cache[k] = u.nome if u else None
+        return _usr_cache[k]
+
+    custos_data = [{
+        "id": str(c.id),
+        "tipo": c.tipo.value,
+        "descricao": c.descricao,
+        "valor": float(c.valor),
+        "quantidade": float(c.quantidade),
+        "total": round(float(c.valor) * float(c.quantidade), 2),
+        "criado_por_nome": _nome(getattr(c, 'criado_por', None)),
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    } for c in custos]
+
+    # ── Equipe ───────────────────────────────────────────────────────────────
+    equipe = db.query(OSEquipe).filter(
+        OSEquipe.os_id == os_id
+    ).order_by(OSEquipe.adicionado_em.asc()).all()
+    equipe_data = [{
+        "id": str(m.id),
+        "nome_membro": m.nome_membro,
+        "cracha": m.cracha,
+        "especialidade": m.especialidade,
+        "adicionado_em": m.adicionado_em.isoformat() if m.adicionado_em else None,
+        "adicionado_por_nome": _nome(m.adicionado_por),
+    } for m in equipe]
+
+    # ── Notificações vinculadas à OS ─────────────────────────────────────────
+    notifs = db.query(Notificacao).filter(
+        Notificacao.os_id == os_id,
+        Notificacao.org_id == user.organization_id,
+    ).order_by(Notificacao.criada_em.asc()).all()
+    notifs_data = [{
+        "id": str(n.id),
+        "tipo": n.tipo,
+        "titulo": n.titulo,
+        "mensagem": n.mensagem,
+        "destinatario_nome": _nome(n.destinatario_id),
+        "lida": n.lida,
+        "criada_em": n.criada_em.isoformat(),
+        "lida_em": n.lida_em.isoformat() if n.lida_em else None,
+    } for n in notifs]
+
+    # ── Logs de auditoria para esta OS ───────────────────────────────────────
+    audit_logs = db.query(AuditoriaLog).filter(
+        AuditoriaLog.entidade_id == os_id,
+        AuditoriaLog.organization_id == user.organization_id,
+    ).order_by(AuditoriaLog.created_at.asc()).all()
+    audit_data = [{
+        "id": str(l.id),
+        "acao": l.acao,
+        "user_nome": _nome(l.user_id),
+        "dados_novos": l.dados_novos,
+        "dados_anteriores": l.dados_anteriores,
+        "created_at": l.created_at.isoformat(),
+    } for l in audit_logs]
+
+    return {
+        "os": os_data,
+        "historico": historico_data,
+        "custos": custos_data,
+        "equipe": equipe_data,
+        "notificacoes": notifs_data,
+        "audit_logs": audit_data,
+    }
 
 # ========== NOTIFICAÇÕES ENDPOINTS ==========
 @api_router.get("/notificacoes")
@@ -4182,6 +4894,7 @@ async def get_billing_plan(user: User = Depends(get_current_user), db: Session =
     }
 
 @api_router.post("/billing/checkout")
+@limiter.limit(LIMIT_BILLING)
 async def create_billing_checkout(data: CheckoutRequest, request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Create a Stripe checkout session for plan upgrade"""
     if user.role != UserRole.ADMIN:

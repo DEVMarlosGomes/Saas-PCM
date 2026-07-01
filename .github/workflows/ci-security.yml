@@ -1,0 +1,138 @@
+name: CI — Security & Quality
+
+on:
+  push:
+    branches: [main, fase-0-hardening, "fase-*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Auditoria de dependências (CVE) ─────────────────────────────────────────
+  audit-deps:
+    name: pip-audit (CVE scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        run: pip install -r backend/requirements.txt pip-audit cyclonedx-bom
+      - name: pip-audit
+        run: pip-audit --requirement backend/requirements.txt --output json --output-file audit-report.json
+        continue-on-error: false
+      - name: Generate SBOM (CycloneDX)
+        run: cyclonedx-py requirements backend/requirements.txt -o sbom.json --format json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: |
+            audit-report.json
+            sbom.json
+
+  # ── Análise estática de segurança (Bandit) ───────────────────────────────────
+  bandit:
+    name: bandit (SAST)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install bandit
+        run: pip install bandit[toml]
+      - name: Run bandit
+        run: |
+          bandit -r backend/ \
+            --skip B101,B104 \
+            --severity-level medium \
+            --confidence-level medium \
+            --format json \
+            --output bandit-report.json || true
+          # Falha o CI apenas em HIGH/CRITICAL
+          bandit -r backend/ \
+            --skip B101,B104 \
+            --severity-level high \
+            --confidence-level high
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+  # ── Semgrep (OWASP Top 10 + regras customizadas) ────────────────────────────
+  semgrep:
+    name: semgrep (OWASP rules)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run semgrep
+        run: |
+          semgrep scan \
+            --config "p/owasp-top-ten" \
+            --config "p/python" \
+            --config "p/jwt" \
+            --config "p/secrets" \
+            backend/ \
+            --json --output semgrep-report.json \
+            --error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
+
+  # ── Testes de segurança (pytest) ─────────────────────────────────────────────
+  security-tests:
+    name: pytest security tests
+    runs-on: ubuntu-latest
+    needs: [audit-deps]
+    env:
+      ENV: development
+      JWT_SECRET: ${{ secrets.JWT_SECRET_CI || 'ci-test-secret-placeholder-64chars-long-here-ok' }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL_CI || '' }}
+      REACT_APP_BACKEND_URL: "http://localhost:8000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        run: pip install -r backend/requirements.txt pytest requests
+      - name: Run unit security tests (offline)
+        working-directory: backend
+        run: |
+          pytest tests/test_security.py \
+            -k "TestSettingsFaillFast" \
+            -v --tb=short
+      - name: Run integration tests (if server running)
+        if: env.DATABASE_URL != ''
+        working-directory: backend
+        run: |
+          python server.py &
+          sleep 5
+          pytest tests/test_security.py \
+            -k "not TestSettingsFaillFast" \
+            -v --tb=short
+
+  # ── Lint Python ───────────────────────────────────────────────────────────────
+  lint:
+    name: flake8 + isort check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lint tools
+        run: pip install flake8 isort
+      - name: flake8
+        run: flake8 backend/app/ --max-line-length 120 --ignore E501,W503
+        continue-on-error: true
+      - name: isort check
+        run: isort backend/app/ --check-only --diff
+        continue-on-error: true
