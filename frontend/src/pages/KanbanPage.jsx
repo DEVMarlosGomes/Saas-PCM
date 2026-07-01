@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { useRealtime } from "../contexts/RealtimeContext";
 import { getKanban, updateOrdemServico, patchOcorrencia } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -581,6 +582,7 @@ function KanbanColumn({ column, onDrop, dragOverCol, onDragOver, onDragLeave, on
 
 export default function KanbanPage() {
   const { user } = useAuth();
+  const { subscribe } = useRealtime();
   const [columns, setColumns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [locked, setLocked] = useState(false);
@@ -609,6 +611,15 @@ export default function KanbanPage() {
     if (user?.features?.kanban === false) { setLocked(true); setLoading(false); return; }
     load();
   }, [load, user]);
+
+  // SSE: recarrega kanban quando qualquer OS muda de status (evento os_status_changed)
+  useEffect(() => {
+    const unsub = subscribe('os_status_changed', () => {
+      // Reload silencioso — não mostra loading spinner
+      getKanban().then(({ data }) => setColumns(data.columns)).catch(() => {});
+    });
+    return unsub;
+  }, [subscribe]);
 
   // ── occurrence handler ──
 

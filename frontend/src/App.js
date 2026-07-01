@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { RealtimeProvider } from "./contexts/RealtimeContext";
 import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { getEquipamentos } from "./lib/api";
@@ -275,12 +276,14 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
+        <RealtimeProvider>
         <TooltipProvider delayDuration={300}>
           <BrowserRouter>
             <AppRoutes />
             <Toaster position="top-right" richColors />
           </BrowserRouter>
         </TooltipProvider>
+        </RealtimeProvider>
       </AuthProvider>
     </ThemeProvider>
   );

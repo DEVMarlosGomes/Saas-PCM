@@ -110,6 +110,7 @@ export const tecnicoLoginApi = (data) => api.post('/auth/tecnico-login', data);
 
 // ─── Equipamentos ─────────────────────────────────────────
 export const getEquipamentos = () => api.get('/equipamentos');
+export const getEquipamentosArvore = () => api.get('/equipamentos/arvore');
 export const getEquipamento = (id) => api.get(`/equipamentos/${id}`);
 export const createEquipamento = (data) => api.post('/equipamentos', data);
 export const updateEquipamento = (id, data) => api.put(`/equipamentos/${id}`, data);

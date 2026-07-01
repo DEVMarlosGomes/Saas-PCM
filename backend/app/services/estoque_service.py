@@ -278,6 +278,19 @@ def verificar_ponto_pedido(
         except Exception:
             pass   # notificação é best-effort; não bloqueia a transação
 
+    # Fase 3 — broadcast SSE dedicado para alerta de estoque
+    try:
+        from app.services.realtime import publish_sync
+        publish_sync(str(org_id), "estoque_alerta", {
+            "peca_id": str(peca.id),
+            "peca_codigo": peca.codigo,
+            "peca_nome": peca.descricao,
+            "saldo": float(saldo_atual),
+            "ponto_pedido": float(peca.ponto_pedido),
+        })
+    except Exception:
+        pass
+
     return True
 
 

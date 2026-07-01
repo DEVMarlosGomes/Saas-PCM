@@ -253,9 +253,12 @@ class Equipamento(Base):
     subgrupo_id = Column(UUID(as_uuid=True), ForeignKey("subgrupos.id"), nullable=True)
     ativo = Column(Boolean, default=True)
     criticidade = Column(Integer, default=1)  # 1-5
+    # Fase 3 — hierarquia: linha → máquina → componente
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("equipamentos.id"), nullable=True)
+    nivel = Column(String(20), nullable=True, default="maquina")  # linha|maquina|componente
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    
+
     __table_args__ = (Index('idx_equipamento_org', 'organization_id'),)
 
 class OrdemServico(Base):
@@ -654,6 +657,8 @@ class EquipamentoCreate(BaseModel):
     grupo_id: Optional[str] = None
     subgrupo_id: Optional[str] = None
     criticidade: int = 1
+    parent_id: Optional[str] = None
+    nivel: Optional[str] = "maquina"
 
 class EquipamentoResponse(BaseModel):
     id: str
@@ -668,7 +673,9 @@ class EquipamentoResponse(BaseModel):
     ativo: bool
     organization_id: str
     created_at: datetime
-    
+    parent_id: Optional[str] = None
+    nivel: Optional[str] = "maquina"
+
     model_config = ConfigDict(from_attributes=True)
 
 class OSCreate(BaseModel):
@@ -1049,6 +1056,10 @@ def ensure_database_schema():
             "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinatura_hash VARCHAR(64)",
             "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinado_por UUID",
             "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinado_em TIMESTAMPTZ",
+            # Fase 3 — hierarquia de ativos
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES equipamentos(id)",
+            "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS nivel VARCHAR(20) DEFAULT 'maquina'",
+            "CREATE INDEX IF NOT EXISTS idx_equip_parent ON equipamentos (parent_id)",
         ]
         try:
             from sqlalchemy import text as sa_text
@@ -1207,6 +1218,18 @@ def criar_notificacao(db: Session, org_id, destinatario_id, tipo: str, titulo: s
     )
     db.add(notif)
     db.commit()
+    # Fase 3 — broadcast SSE para o tenant
+    try:
+        from app.services.realtime import publish_sync
+        publish_sync(str(org_id), "notificacao_nova", {
+            "id": str(notif.id),
+            "tipo": tipo,
+            "titulo": titulo,
+            "mensagem": mensagem,
+            "os_id": str(os_id) if os_id else None,
+        })
+    except Exception:
+        pass
 
 
 def send_email_notification(db: Session, org: "Organization", destinatario_id, subject: str, html_body: str):
@@ -2869,8 +2892,81 @@ async def list_equipamentos(user: User = Depends(get_current_user), db: Session 
         grupo_id=str(e.grupo_id) if e.grupo_id else None,
         subgrupo_id=str(e.subgrupo_id) if e.subgrupo_id else None,
         criticidade=e.criticidade, ativo=e.ativo,
-        organization_id=str(e.organization_id), created_at=e.created_at
+        organization_id=str(e.organization_id), created_at=e.created_at,
+        parent_id=str(e.parent_id) if getattr(e, "parent_id", None) else None,
+        nivel=getattr(e, "nivel", "maquina"),
     ) for e in equipamentos]
+
+@api_router.get("/equipamentos/arvore")
+async def get_equipamentos_arvore(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Retorna hierarquia de equipamentos em árvore com métricas agregadas.
+    Cada nó inclui MTTR, MTBF e custo total das OS dos filhos (transitivamente).
+    """
+    from sqlalchemy import func as _func
+
+    all_equips = db.query(Equipamento).filter(
+        Equipamento.organization_id == user.organization_id,
+        Equipamento.ativo == True,
+    ).all()
+
+    # Pré-calcula métricas por equipamento (OS fechadas + revisadas)
+    _os_q = db.query(
+        OrdemServico.equipamento_id,
+        _func.avg(OrdemServico.tempo_reparo).label("mttr"),
+        _func.count(OrdemServico.id).label("total_os"),
+    ).filter(
+        OrdemServico.organization_id == user.organization_id,
+        OrdemServico.status.in_([StatusOS.FECHADA, StatusOS.REVISADA]),
+    ).group_by(OrdemServico.equipamento_id).all()
+
+    _custo_q = db.query(
+        OrdemServico.equipamento_id,
+        _func.sum(CustoOS.valor * CustoOS.quantidade).label("custo_total"),
+    ).join(CustoOS, CustoOS.ordem_servico_id == OrdemServico.id).filter(
+        OrdemServico.organization_id == user.organization_id,
+    ).group_by(OrdemServico.equipamento_id).all()
+
+    _metricas: dict = {}
+    for row in _os_q:
+        eid = str(row.equipamento_id)
+        _metricas.setdefault(eid, {})["mttr_minutos"] = round(float(row.mttr or 0), 1)
+        _metricas.setdefault(eid, {})["total_os"] = int(row.total_os)
+    for row in _custo_q:
+        eid = str(row.equipamento_id)
+        _metricas.setdefault(eid, {})["custo_total"] = round(float(row.custo_total or 0), 2)
+
+    def _build_node(equip) -> dict:
+        eid = str(equip.id)
+        m = _metricas.get(eid, {})
+        children = [_build_node(c) for c in all_equips if str(getattr(c, "parent_id", None)) == eid]
+        # Agrega métricas dos filhos recursivamente
+        custo_filho = sum(c.get("metricas", {}).get("custo_total", 0) + c.get("metricas", {}).get("custo_filhos", 0) for c in children)
+        os_filho = sum(c.get("metricas", {}).get("total_os", 0) + c.get("metricas", {}).get("os_filhos", 0) for c in children)
+        return {
+            "id": eid,
+            "codigo": equip.codigo,
+            "nome": equip.nome,
+            "nivel": getattr(equip, "nivel", "maquina") or "maquina",
+            "localizacao": equip.localizacao,
+            "criticidade": equip.criticidade,
+            "metricas": {
+                "mttr_minutos": m.get("mttr_minutos", 0),
+                "custo_total": m.get("custo_total", 0),
+                "total_os": m.get("total_os", 0),
+                # inclui filhos para drill-down
+                "custo_filhos": custo_filho,
+                "os_filhos": os_filho,
+                "custo_agregado": round(m.get("custo_total", 0) + custo_filho, 2),
+                "os_agregado": m.get("total_os", 0) + os_filho,
+            },
+            "filhos": children,
+        }
+
+    # Raízes: equipamentos sem pai (ou pai fora da mesma org)
+    raizes = [e for e in all_equips if not getattr(e, "parent_id", None)]
+    return [_build_node(r) for r in raizes]
+
 
 @api_router.post("/equipamentos", response_model=EquipamentoResponse)
 async def create_equipamento(data: EquipamentoCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -2883,11 +2979,23 @@ async def create_equipamento(data: EquipamentoCreate, user: User = Depends(get_c
     if not allowed:
         raise HTTPException(status_code=402, detail=msg)
     
+    # Fase 3: validar parent_id pertence à mesma org
+    _parent_id = None
+    if getattr(data, "parent_id", None):
+        _parent = db.query(Equipamento).filter(
+            Equipamento.id == data.parent_id,
+            Equipamento.organization_id == user.organization_id,
+        ).first()
+        if not _parent:
+            raise HTTPException(status_code=404, detail="Equipamento pai não encontrado.")
+        _parent_id = _parent.id
+
     equipamento = Equipamento(
         codigo=data.codigo, nome=data.nome, descricao=data.descricao,
         localizacao=data.localizacao, valor_hora=data.valor_hora,
         grupo_id=data.grupo_id, subgrupo_id=data.subgrupo_id,
-        criticidade=data.criticidade, organization_id=user.organization_id
+        criticidade=data.criticidade, organization_id=user.organization_id,
+        parent_id=_parent_id, nivel=getattr(data, "nivel", "maquina") or "maquina",
     )
     db.add(equipamento)
     db.commit()
@@ -3420,6 +3528,20 @@ async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current
         dados_anteriores=None,
         dados_novos=json_lib.dumps(changes, ensure_ascii=False) if changes else None
     )
+
+    # Fase 3 — broadcast SSE: mudança de status
+    if data.status:
+        try:
+            from app.services.realtime import publish_sync as _pub
+            _equip = db.query(Equipamento).filter(Equipamento.id == os.equipamento_id).first()
+            _pub(str(os.organization_id), "os_status_changed", {
+                "os_id": str(os.id),
+                "numero": os.numero,
+                "status": os.status.value,
+                "equipamento": _equip.nome if _equip else None,
+            })
+        except Exception:
+            pass
 
     return build_os_response(os, db, user=user)
 
@@ -7279,6 +7401,73 @@ from app.routers.evidencias import get_current_user_stub as _evidencias_user_stu
 
 app.dependency_overrides[_evidencias_user_stub] = get_current_user
 app.include_router(_evidencias_router, prefix="/api")
+
+# ── SSE — Tempo real por tenant (Fase 3) ─────────────────────────────────────
+import asyncio as _asyncio
+from fastapi.responses import StreamingResponse as _StreamingResponse
+
+@app.get("/api/events")
+async def sse_events(token: str, request: Request):
+    """
+    Server-Sent Events autenticado.
+    - Autenticação via query param `?token=<JWT>` (não via cookie — SSE não suporta headers personalizados).
+    - Canal isolado por organization_id: eventos de uma org NUNCA chegam a outra.
+    - Keepalive a cada 25 s (comment SSE `": ping"`).
+    - Conexão recusada imediatamente se token inválido/expirado.
+
+    Eventos emitidos:
+      os_status_changed   — { os_id, numero, status, equipamento }
+      notificacao_nova    — { id, tipo, titulo, mensagem }
+      estoque_alerta      — { peca_id, peca_nome, saldo, ponto_pedido }
+      keepalive           — {} (não processado pelo cliente)
+    """
+    # Validar JWT no handshake — recusa conexão sem token válido
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if not payload.get("type") == "access" or not user_id:
+            raise ValueError("token inválido")
+    except Exception:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Token inválido ou expirado."})
+
+    # Carregar org_id do usuário (isolamento de tenant)
+    db = SessionLocal()
+    try:
+        _user = db.query(User).filter(User.id == user_id).first()
+        if not _user or not _user.ativo:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "Usuário não autorizado."})
+        org_id = str(_user.organization_id)
+    finally:
+        db.close()
+
+    from app.services.realtime import subscribe, unsubscribe
+    q = subscribe(org_id)
+
+    async def _generator():
+        try:
+            yield ": connected\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await _asyncio.wait_for(q.get(), timeout=25.0)
+                    yield f"data: {msg}\n\n"
+                except _asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        finally:
+            unsubscribe(org_id, q)
+
+    return _StreamingResponse(
+        _generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # desativa buffer do nginx
+        },
+    )
+
 
 @app.get("/")
 async def root():
