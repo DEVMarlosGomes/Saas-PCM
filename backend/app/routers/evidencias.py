@@ -82,7 +82,7 @@ def _str(val) -> str:
 def _check_plano(user, db) -> None:
     """Verifica se o plano da org tem modulo_evidencias ativo (retorna 402 se não)."""
     try:
-        from server import Organization, PLAN_LIMITS  # late import to avoid circular
+        from ..models.core import Organization, PLAN_LIMITS
     except ImportError:
         from __main__ import Organization, PLAN_LIMITS  # fallback
     org = db.query(Organization).filter(
@@ -131,7 +131,7 @@ async def upload_anexo(
         raise HTTPException(status_code=403, detail="Acesso negado.")
 
     from ..models.evidencias import AnexoOS
-    from server import OrdemServico  # late import
+    from ..models.core import OrdemServico
 
     os_obj = db.query(OrdemServico).filter(
         OrdemServico.id == os_id,
@@ -187,7 +187,7 @@ async def upload_anexo(
 
     # Auditoria
     try:
-        from server import create_audit_log
+        from ..deps import create_audit_log
         create_audit_log(
             db, str(user.organization_id), str(user.id),
             "AnexoOS", str(anexo.id), "upload",
@@ -222,7 +222,7 @@ async def listar_anexos(
     _check_plano(user, db)
 
     from ..models.evidencias import AnexoOS
-    from server import OrdemServico
+    from ..models.core import OrdemServico
 
     os_obj = db.query(OrdemServico).filter(
         OrdemServico.id == os_id,
@@ -488,7 +488,7 @@ async def executar_checklist(
         raise HTTPException(status_code=403, detail="Acesso negado.")
 
     from ..models.evidencias import ChecklistTemplate, ChecklistExecucao
-    from server import OrdemServico
+    from ..models.core import OrdemServico
 
     os_obj = db.query(OrdemServico).filter(
         OrdemServico.id == os_id,
@@ -568,7 +568,7 @@ async def listar_checklists_os(
     _check_plano(user, db)
 
     from ..models.evidencias import ChecklistExecucao
-    from server import OrdemServico
+    from ..models.core import OrdemServico
 
     os_obj = db.query(OrdemServico).filter(
         OrdemServico.id == os_id,

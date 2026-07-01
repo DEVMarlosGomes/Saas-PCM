@@ -248,7 +248,7 @@ def verificar_ponto_pedido(
     # Importa User aqui para não criar dependência circular no topo do módulo
     from sqlalchemy import or_
     try:
-        from server import User, UserRole  # type: ignore[import]
+        from ..models.core import User, UserRole
     except ImportError:
         return True   # não conseguiu notificar, mas não bloqueia
 

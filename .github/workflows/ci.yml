@@ -1,0 +1,99 @@
+name: AURIX CI
+
+on:
+  push:
+    branches: ["main", "fase-*"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  backend:
+    name: Backend — lint + type check + tests + SAST + dep audit
+    runs-on: ubuntu-latest
+
+    env:
+      JWT_SECRET: "ci-test-secret-32-characters-for-ci!!"
+      DATABASE_URL: ""          # testes unitários não precisam de DB
+      ENV: development
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      # ── Lint ──────────────────────────────────────────────────────────────
+      - name: Black (format check)
+        working-directory: backend
+        run: black --check .
+
+      - name: Flake8 (style)
+        working-directory: backend
+        run: flake8 . --max-line-length=120 --extend-ignore=E203,W503
+
+      # ── Type check ───────────────────────────────────────────────────────
+      - name: Mypy (type check — app/ only)
+        working-directory: backend
+        run: mypy app/ --ignore-missing-imports --no-strict-optional
+        continue-on-error: true   # não bloqueia CI ainda; meta é zero erros
+
+      # ── Tests ────────────────────────────────────────────────────────────
+      - name: Pytest (unit tests + coverage)
+        working-directory: backend
+        run: |
+          pip install pytest-cov pytest-asyncio
+          pytest tests/test_auth_unit.py tests/test_billing_unit.py \
+                 tests/test_upload_unit.py tests/test_estoque_unit.py \
+                 tests/test_tenant_unit.py \
+                 -v --tb=short \
+                 --cov=app --cov-report=term-missing \
+                 --cov-fail-under=70
+
+      # ── SAST ─────────────────────────────────────────────────────────────
+      - name: Bandit (SAST)
+        working-directory: backend
+        run: bandit -r app/ -ll -q
+        continue-on-error: false
+
+      # ── Dependency audit ─────────────────────────────────────────────────
+      - name: pip-audit (CVE scan)
+        working-directory: backend
+        run: pip-audit --require-hashes=false -r requirements.txt
+        continue-on-error: true   # alertas mas não bloqueia deploy
+
+  frontend:
+    name: Frontend — lint + build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: ESLint
+        working-directory: frontend
+        run: npm run lint --if-present
+        continue-on-error: true
+
+      - name: Build
+        working-directory: frontend
+        env:
+          CI: false   # warnings não quebram o build
+          REACT_APP_BACKEND_URL: http://localhost:8000
+        run: npm run build

@@ -54,7 +54,7 @@ def _check_estoque_plano(user, db: Session) -> None:
     Levanta 402 se não suportar.
     """
     try:
-        from server import Organization, PLAN_LIMITS  # type: ignore[import]
+        from ..models.core import Organization, PLAN_LIMITS
         org = db.query(Organization).filter(Organization.id == user.organization_id).first()
         if org:
             limites = PLAN_LIMITS.get(org.plano, {})
@@ -528,7 +528,7 @@ async def consumo_por_equipamento(
     por_equipamento: dict = {}
     for m in movs:
         try:
-            from server import OrdemServico, Equipamento  # type: ignore[import]
+            from ..models.core import OrdemServico, Equipamento
             os_obj = db.query(OrdemServico).filter(OrdemServico.id == m.os_id).first()
             if not os_obj:
                 continue
@@ -638,7 +638,7 @@ def _build_movimento_response(mov: MovimentoEstoque, peca, deposito, user) -> Mo
 
 def _disparar_ponto_pedido(db: Session, peca: Peca, saldo_atual: float, org_id: str) -> None:
     try:
-        from server import criar_notificacao  # type: ignore[import]
+        from ..deps import criar_notificacao
         verificar_ponto_pedido(db, peca, saldo_atual, org_id, criar_notificacao)
     except Exception:
         pass   # notificação é best-effort
