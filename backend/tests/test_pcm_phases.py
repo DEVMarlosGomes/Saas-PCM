@@ -8,8 +8,7 @@ import uuid
 import pytest
 import requests
 
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or
-            "https://212411fc-e66c-4833-b808-0d9acfdfde95.preview.emergentagent.com").rstrip("/")
+BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://localhost:8000").rstrip("/")
 API = f"{BASE_URL}/api"
 ORG_ID = "3c19698e-8a01-4df1-ba45-d266d28e0664"
 
