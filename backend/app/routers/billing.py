@@ -192,23 +192,15 @@ async def get_checkout_status(session_id: str, request: Request, user: User = De
         return {"status": "complete", "payment_status": "paid", "plan": transaction.plan}
     
     try:
-        from emergentintegrations.payments.stripe.checkout import StripeCheckout
-        
-        api_key = os.environ.get("STRIPE_API_KEY", "")
-        host_url = str(request.base_url).rstrip("/")
-        webhook_url = f"{host_url}/api/webhook/stripe"
-        
-        stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
-        checkout_status = await stripe_checkout.get_checkout_status(session_id)
-        
-        # Update transaction
-        transaction.payment_status = checkout_status.payment_status
-        
-        # If paid and not already processed, upgrade the plan
-        if checkout_status.payment_status == "paid" and transaction.payment_status != "paid":
-            transaction.payment_status = "paid"
-        
-        if checkout_status.payment_status == "paid":
+        import stripe as _stripe
+        _stripe.api_key = os.environ.get("STRIPE_API_KEY", "")
+        cs = _stripe.checkout.Session.retrieve(session_id)
+        payment_status = cs.payment_status  # "paid" | "unpaid" | "no_payment_required"
+        status = cs.status                   # "complete" | "expired" | "open"
+
+        transaction.payment_status = payment_status
+
+        if payment_status == "paid":
             org = db.query(Organization).filter(Organization.id == transaction.organization_id).first()
             if org:
                 target_plan = PlanoSaaS(transaction.plan)
@@ -218,12 +210,12 @@ async def get_checkout_status(session_id: str, request: Request, user: User = De
                 org.limite_usuarios = plan_info["max_users"]
                 org.limite_os_mes = plan_info["max_os_mes"]
                 org.subscription_status = "active"
-        
+
         db.commit()
-        
+
         return {
-            "status": checkout_status.status,
-            "payment_status": checkout_status.payment_status,
+            "status": status,
+            "payment_status": payment_status,
             "plan": transaction.plan,
         }
     except Exception as e:
@@ -234,28 +226,31 @@ async def get_checkout_status(session_id: str, request: Request, user: User = De
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     """Handle Stripe webhooks"""
     import json as json_lib
+    import stripe as _stripe
     try:
-        from emergentintegrations.payments.stripe.checkout import StripeCheckout
-        
-        api_key = os.environ.get("STRIPE_API_KEY", "")
-        host_url = str(request.base_url).rstrip("/")
-        webhook_url = f"{host_url}/api/webhook/stripe"
-        
-        stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
+        _stripe.api_key = os.environ.get("STRIPE_API_KEY", "")
+        webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
         body = await request.body()
         signature = request.headers.get("Stripe-Signature", "")
-        
-        webhook_response = await stripe_checkout.handle_webhook(body, signature)
-        
-        if webhook_response and webhook_response.session_id:
+
+        try:
+            event = _stripe.Webhook.construct_event(body, signature, webhook_secret)
+        except _stripe.error.SignatureVerificationError:
+            raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+        if event["type"] == "checkout.session.completed":
+            cs = event["data"]["object"]
+            session_id = cs["id"]
+            payment_status = cs.get("payment_status", "unknown")
+
             transaction = db.query(PaymentTransaction).filter(
-                PaymentTransaction.session_id == webhook_response.session_id
+                PaymentTransaction.session_id == session_id
             ).first()
-            
+
             if transaction and transaction.payment_status != "paid":
-                transaction.payment_status = webhook_response.payment_status or "unknown"
-                
-                if webhook_response.payment_status == "paid":
+                transaction.payment_status = payment_status
+
+                if payment_status == "paid":
                     org = db.query(Organization).filter(Organization.id == transaction.organization_id).first()
                     if org:
                         target_plan = PlanoSaaS(transaction.plan)
@@ -265,10 +260,12 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                         org.limite_usuarios = plan_info["max_users"]
                         org.limite_os_mes = plan_info["max_os_mes"]
                         org.subscription_status = "active"
-                
+
                 db.commit()
-        
+
         return {"status": "ok"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return {"status": "error", "message": str(e)}
