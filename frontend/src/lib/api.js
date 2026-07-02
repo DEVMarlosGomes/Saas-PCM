@@ -110,6 +110,7 @@ export const tecnicoLoginApi = (data) => api.post('/auth/tecnico-login', data);
 
 // ─── Equipamentos ─────────────────────────────────────────
 export const getEquipamentos = () => api.get('/equipamentos');
+export const getEquipamentosArvore = () => api.get('/equipamentos/arvore');
 export const getEquipamento = (id) => api.get(`/equipamentos/${id}`);
 export const createEquipamento = (data) => api.post('/equipamentos', data);
 export const updateEquipamento = (id, data) => api.put(`/equipamentos/${id}`, data);
@@ -121,6 +122,10 @@ export const getOrdensServico = (params) => api.get('/ordens-servico', { params 
 export const getOrdemServico = (id) => api.get(`/ordens-servico/${id}`);
 export const createOrdemServico = (data) => api.post('/ordens-servico', data);
 export const updateOrdemServico = (id, data) => api.put(`/ordens-servico/${id}`, data);
+export const reassinarTecnico = (osId, data) => api.patch(`/ordens-servico/${osId}/reassinar`, data);
+export const getOSExceoesArea = (osId) => api.get(`/ordens-servico/${osId}/excecoes-area`);
+export const addOSExcecaoArea = (osId, matricula) => api.post(`/ordens-servico/${osId}/excecoes-area`, { matricula });
+export const removeOSExcecaoArea = (osId, matricula) => api.delete(`/ordens-servico/${osId}/excecoes-area/${encodeURIComponent(matricula)}`);
 
 // ─── Custos ───────────────────────────────────────────────
 export const getCustos = (params) => api.get('/custos', { params });
@@ -146,6 +151,13 @@ export const updateUser = (id, data) => api.put(`/users/${id}`, data);
 export const deleteUser = (id) => api.delete(`/users/${id}`);
 export const buscarPorCracha = (cracha) => api.get('/users/buscar-por-cracha', { params: { cracha } });
 
+// ─── Colaboradores ────────────────────────────────────────
+export const getColaboradores = () => api.get('/colaboradores');
+export const createColaborador = (data) => api.post('/colaboradores', data);
+export const updateColaborador = (id, data) => api.put(`/colaboradores/${id}`, data);
+export const deleteColaborador = (id) => api.delete(`/colaboradores/${id}`);
+export const lookupColaborador = (matricula) => api.get('/colaboradores/lookup', { params: { matricula } });
+
 // ─── Organização ──────────────────────────────────────────
 export const getOrganization = () => api.get('/organization');
 export const updateOrganization = (data) => api.put('/organization', data);
@@ -154,6 +166,7 @@ export const revokeApiKey = () => api.delete('/organization/api-key');
 
 // ─── Auditoria ────────────────────────────────────────────
 export const getAuditoria = (params) => api.get('/auditoria', { params });
+export const getOSAuditDossier = (os_id) => api.get(`/auditoria/os/${os_id}`);
 
 // ─── Billing ─────────────────────────────────────────────
 export const getBillingPlan = () => api.get('/billing/plan');
@@ -184,6 +197,52 @@ export const registrarLeitura = (data) => api.post('/preditivo/leituras', data);
 export const getHistoricoLeituras = (equipId, params) => api.get(`/preditivo/leituras/${equipId}`, { params });
 export const getRelatorioKPIs = (params) => api.get('/relatorios/kpis', { params });
 export const getRelatorioEquipamentos = (params) => api.get('/relatorios/equipamentos', { params });
+
+// ─── Almoxarifado / Estoque ─────────────────────────────────
+// Fornecedores
+export const getFornecedores = (params) => api.get('/fornecedores', { params });
+export const createFornecedor = (data) => api.post('/fornecedores', data);
+export const updateFornecedor = (id, data) => api.put(`/fornecedores/${id}`, data);
+
+// Peças
+export const getPecas = (params) => api.get('/pecas', { params });
+export const getPeca = (id) => api.get(`/pecas/${id}`);
+export const createPeca = (data) => api.post('/pecas', data);
+export const updatePeca = (id, data) => api.put(`/pecas/${id}`, data);
+export const desativarPeca = (id) => api.delete(`/pecas/${id}`);
+
+// Depósitos
+export const getDepositos = (params) => api.get('/depositos', { params });
+export const createDeposito = (data) => api.post('/depositos', data);
+export const updateDeposito = (id, data) => api.put(`/depositos/${id}`, data);
+
+// Saldos e movimentos
+export const getSaldoEstoque = (params) => api.get('/estoque/saldo', { params });
+export const getAbaixoPontoPedido = () => api.get('/estoque/abaixo-ponto-pedido');
+export const registrarMovimento = (data) => api.post('/estoque/movimento', data);
+export const getMovimentos = (params) => api.get('/estoque/movimentos', { params });
+
+// Consumo em OS
+export const consumirPecaOS = (osId, data) => api.post(`/ordens-servico/${osId}/pecas`, data);
+export const getPecasOS = (osId) => api.get(`/ordens-servico/${osId}/pecas`);
+
+// Relatório
+export const getConsumoPorEquipamento = (params) => api.get('/relatorios/consumo-por-equipamento', { params });
+
+// ─── Evidências & Compliance (Fase 2) ─────────────────────
+export const uploadAnexoOS = (osId, formData) =>
+  api.post(`/ordens-servico/${osId}/anexos`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+export const listarAnexosOS = (osId) => api.get(`/ordens-servico/${osId}/anexos`);
+export const downloadAnexo = (anexoId) => api.get(`/anexos/${anexoId}/download`, { maxRedirects: 0 });
+export const deletarAnexo = (anexoId) => api.delete(`/anexos/${anexoId}`);
+
+export const getChecklistTemplates = (params) => api.get('/checklist-templates', { params });
+export const createChecklistTemplate = (data) => api.post('/checklist-templates', data);
+export const updateChecklistTemplate = (id, data) => api.put(`/checklist-templates/${id}`, data);
+export const desativarChecklistTemplate = (id) => api.delete(`/checklist-templates/${id}`);
+
+export const executarChecklist = (osId, data) => api.post(`/ordens-servico/${osId}/checklist`, data);
+export const getChecklistsOS = (osId) => api.get(`/ordens-servico/${osId}/checklist`);
 
 // ─── Reviews ──────────────────────────────────────────────
 export const getPendingReviews = () => api.get('/ordens-servico/pending-reviews');
@@ -222,5 +281,41 @@ export const getSuperuserDashboard = () => api.get('/superuser/dashboard');
 
 // ─── Seed Demo ────────────────────────────────────────────
 export const seedDemo = (reset = false) => api.post(`/seed-demo${reset ? '?reset=true' : ''}`);
+
+// ─── MFA (Fase 5.2) ───────────────────────────────────────
+export const mfaSetup = () => api.post('/auth/mfa/setup');
+export const mfaEnable = (code) => api.post('/auth/mfa/enable', { code });
+export const mfaVerify = (code) => api.post('/auth/mfa/verify', { code });
+export const mfaDisable = (password, code) => api.post('/auth/mfa/disable', { password, code });
+export const mfaBackupCount = () => api.get('/auth/mfa/backup-codes');
+export const mfaUseBackup = (code) => api.post('/auth/mfa/use-backup', { code });
+
+// ─── LGPD (Fase 5.5) ──────────────────────────────────────
+export const lgpdExport = () => api.get('/lgpd/export', { responseType: 'blob' });
+export const lgpdDeleteRequest = (motivo) => api.post('/lgpd/delete-request', { motivo, confirmar: true });
+export const lgpdListRequests = () => api.get('/lgpd/requests');
+export const lgpdConsent = (finalidade, consentiu) => api.post('/lgpd/consent', { finalidade, consentiu });
+export const lgpdListConsents = () => api.get('/lgpd/consent');
+
+// ─── RBAC (Fase 5.3) ──────────────────────────────────────
+export const rbacPermissoes = () => api.get('/rbac/permissoes');
+export const rbacPapeis = () => api.get('/rbac/papeis');
+export const rbacCreatePapel = (data) => api.post('/rbac/papeis', data);
+export const rbacSetPermissoes = (id, permissao_ids) => api.put(`/rbac/papeis/${id}/permissoes`, { permissao_ids });
+export const rbacAtribuirPapel = (papelId, user_id) => api.post(`/rbac/papeis/${papelId}/usuarios`, { user_id });
+export const rbacRemoverPapel = (papelId, uid) => api.delete(`/rbac/papeis/${papelId}/usuarios/${uid}`);
+export const rbacMe = () => api.get('/rbac/me');
+
+// ─── SSO (Fase 5.1) ───────────────────────────────────────
+export const ssoProviders = () => api.get('/auth/sso/providers');
+export const ssoConfigura = (data) => api.post('/auth/sso/configure', data);
+
+// ─── Exportações (Fase 5.4) ───────────────────────────────
+export const exportarOSPDF = (params) =>
+  api.get('/relatorios/os/export/pdf', { params, responseType: 'blob' });
+export const exportarOSExcel = (params) =>
+  api.get('/relatorios/os/export/excel', { params, responseType: 'blob' });
+export const exportarKPIPDF = (params) =>
+  api.get('/relatorios/kpi/export/pdf', { params, responseType: 'blob' });
 
 export default api;

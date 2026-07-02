@@ -6,6 +6,7 @@ import {
   Activity, Lock, Loader2, RefreshCw, CheckCircle2,
   X, Eye, Wrench, Settings, Plus,
 } from "lucide-react";
+import { HelpTooltip } from "../components/shared/HelpTooltip";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -54,10 +55,13 @@ function UpgradeGate() {
 
 // ─── KpiCard ────────────────────────────────────────────────────────────────
 
-function KpiCard({ label, value, sub, color }) {
+function KpiCard({ label, value, sub, color, tooltip }) {
   return (
     <div className="border border-border/50 rounded-xl bg-card p-5 space-y-1">
-      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{label}</p>
+      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider flex items-center">
+        {label}
+        {tooltip && <HelpTooltip text={tooltip} />}
+      </p>
       <p className="text-3xl font-heading font-bold" style={{ color: color || "inherit" }}>{value ?? "—"}</p>
       {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
     </div>
@@ -88,7 +92,10 @@ function HealthCard({ equip, onSelect, selected }) {
       {equip.monitoramento_ativo ? (
         <div className="mt-2 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
-          <span className="text-[11px] text-muted-foreground">RUL: {fmtRUL(equip.rul_estimado_dias)}</span>
+          <span className="text-[11px] text-muted-foreground flex items-center gap-0.5">
+            RUL: {fmtRUL(equip.rul_estimado_dias)}
+            <HelpTooltip text="Remaining Useful Life — estimativa de dias restantes antes que o equipamento precise de intervenção, calculada por tendência de degradação." />
+          </span>
         </div>
       ) : (
         <p className="text-[10px] text-muted-foreground/40 mt-1">Sem monitoramento</p>
@@ -400,21 +407,25 @@ export default function PreditivoPage() {
       {dashboard && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard label="Monitorados" value={dashboard.total_equipamentos_monitorados}
-            sub="equipamentos ativos" />
+            sub="equipamentos ativos"
+            tooltip="Total de equipamentos com configuração de monitoramento preditivo ativa." />
           <KpiCard label="Em Atenção" value={dashboard.equipamentos_atencao}
-            color="#F59E0B" sub="threshold atenção violado" />
+            color="#F59E0B" sub="threshold atenção violado"
+            tooltip="Equipamentos cujas leituras ultrapassaram o limiar de atenção mas ainda não atingiram o nível crítico." />
           <KpiCard label="Críticos" value={dashboard.equipamentos_critico}
-            color="#EF4444" sub="ação imediata necessária" />
+            color="#EF4444" sub="ação imediata necessária"
+            tooltip="Equipamentos com leituras acima do threshold crítico — exigem intervenção imediata para evitar falha catastrófica." />
           <KpiCard label="Alertas abertos" value={dashboard.alertas_abertos}
             sub={`${dashboard.alertas_criticos_abertos} críticos`}
-            color={dashboard.alertas_criticos_abertos > 0 ? "#EF4444" : undefined} />
+            color={dashboard.alertas_criticos_abertos > 0 ? "#EF4444" : undefined}
+            tooltip="Alertas gerados automaticamente pelo motor preditivo que ainda não foram tratados ou ignorados." />
         </div>
       )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border/50">
         {[
-          ["saude", "Saúde da Frota"],
+          ["saude", "Condições dos Ativos"],
           ["alertas", `Alertas (${alertas.length})`],
           ["config", "Configurações"],
         ].map(([k, label]) => (

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Bell } from 'lucide-react';
 import { getNotificacoes, countNotificacoes, marcarLida, marcarTodasLidas } from '../../lib/api';
+import { useRealtime } from '../../contexts/RealtimeContext';
 
 const TIPO_ICON = {
   revisao_pendente: '🔍',
@@ -21,6 +22,7 @@ export default function NotificacoesDropdown() {
   const [notifs, setNotifs] = useState([]);
   const [count, setCount] = useState(0);
   const ref = useRef(null);
+  const { subscribe } = useRealtime();
 
   const fetchCount = useCallback(async () => {
     try {
@@ -36,11 +38,22 @@ export default function NotificacoesDropdown() {
     } catch {}
   }, []);
 
+  // Carga inicial + fallback polling a cada 5 min (SSE é o canal primário)
   useEffect(() => {
     fetchCount();
-    const interval = setInterval(fetchCount, 30000);
+    const interval = setInterval(fetchCount, 300000);
     return () => clearInterval(interval);
   }, [fetchCount]);
+
+  // SSE: incrementa badge imediatamente ao receber notificação
+  useEffect(() => {
+    const unsub = subscribe('notificacao_nova', () => {
+      setCount(c => c + 1);
+      // Se o dropdown estiver aberto, recarrega a lista
+      setOpen(prev => { if (prev) fetchNotifs(); return prev; });
+    });
+    return unsub;
+  }, [subscribe, fetchNotifs]);
 
   useEffect(() => {
     if (open) fetchNotifs();

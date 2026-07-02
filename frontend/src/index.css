@@ -309,9 +309,3 @@
   overflow: hidden;
 }
 
-/* ========== Emergent debug wrapper ========== */
-@layer base {
-  [data-debug-wrapper="true"] {
-    display: contents !important;
-  }
-}

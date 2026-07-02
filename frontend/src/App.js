@@ -2,7 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { RealtimeProvider } from "./contexts/RealtimeContext";
 import { Toaster } from "./components/ui/sonner";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { getEquipamentos } from "./lib/api";
 import { toast } from "sonner";
 import { Wrench, LogIn } from "lucide-react";
@@ -18,6 +20,7 @@ import EquipamentosPage from "./pages/EquipamentosPage";
 import OrdensServicoPage from "./pages/OrdensServicoPage";
 import PlanosPreventivosPage from "./pages/PlanosPreventivosPage";
 import UsuariosPage from "./pages/UsuariosPage";
+import ColaboradoresPage from "./pages/ColaboradoresPage";
 import AuditoriaPage from "./pages/AuditoriaPage";
 import BillingPage from "./pages/BillingPage";
 import SettingsPage from "./pages/SettingsPage";
@@ -25,6 +28,10 @@ import PreditivoPage from "./pages/PreditivoPage";
 import RelatoriosPage from "./pages/RelatoriosPage";
 import KanbanPage from "./pages/KanbanPage";
 import SuperuserPage from "./pages/SuperuserPage";
+import EstoquePage from "./pages/EstoquePage";
+import FornecedoresPage from "./pages/FornecedoresPage";
+import EvidenciasPage from "./pages/EvidenciasPage";
+import MFAPage from "./pages/MFAPage";
 
 // Layout
 import AppLayout from "./components/AppLayout";
@@ -210,8 +217,11 @@ const PublicRoute = ({ children }) => {
 
   if (user && user !== false) {
     if (user.role === "superusuario") return <Navigate to="/superuser" replace />;
-    if (user.role === "operador" || user.role === "tecnico") return <Navigate to="/dashboard/operador" replace />;
-    if (user.role === "lider") return <Navigate to="/dashboard/lider" replace />;
+    if (["operador", "tecnico", "lider_producao", "supervisor_producao"].includes(user.role))
+      return <Navigate to="/dashboard/operador" replace />;
+    if (["lider", "lider_manutencao_eletrica", "lider_manutencao_mecanica",
+         "supervisor_manutencao", "analista_manutencao", "engenheiro_manutencao"].includes(user.role))
+      return <Navigate to="/dashboard/lider" replace />;
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -221,8 +231,11 @@ const PublicRoute = ({ children }) => {
 function IndexRedirect() {
   const { user } = useAuth();
   if (user?.role === "superusuario") return <Navigate to="/superuser" replace />;
-  if (user?.role === "operador" || user?.role === "tecnico") return <Navigate to="/dashboard/operador" replace />;
-  if (user?.role === "lider") return <Navigate to="/dashboard/lider" replace />;
+  if (["operador", "tecnico", "lider_producao", "supervisor_producao"].includes(user?.role))
+    return <Navigate to="/dashboard/operador" replace />;
+  if (["lider", "lider_manutencao_eletrica", "lider_manutencao_mecanica",
+       "supervisor_manutencao", "analista_manutencao", "engenheiro_manutencao"].includes(user?.role))
+    return <Navigate to="/dashboard/lider" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -242,12 +255,17 @@ function AppRoutes() {
         <Route path="ordens-servico" element={<OrdensServicoPage />} />
         <Route path="planos-preventivos" element={<PlanosPreventivosPage />} />
         <Route path="usuarios" element={<UsuariosPage />} />
+        <Route path="colaboradores" element={<ColaboradoresPage />} />
+        <Route path="estoque" element={<EstoquePage />} />
+        <Route path="fornecedores" element={<FornecedoresPage />} />
+        <Route path="evidencias" element={<EvidenciasPage />} />
         <Route path="auditoria" element={<AuditoriaPage />} />
         <Route path="preditivo" element={<PreditivoPage />} />
         <Route path="relatorios" element={<RelatoriosPage />} />
         <Route path="kanban" element={<KanbanPage />} />
         <Route path="billing" element={<BillingPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="mfa" element={<MFAPage />} />
         <Route path="superuser" element={<SuperuserPage />} />
       </Route>
 
@@ -260,10 +278,14 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <BrowserRouter>
-          <AppRoutes />
-          <Toaster position="top-right" richColors />
-        </BrowserRouter>
+        <RealtimeProvider>
+        <TooltipProvider delayDuration={300}>
+          <BrowserRouter>
+            <AppRoutes />
+            <Toaster position="top-right" richColors />
+          </BrowserRouter>
+        </TooltipProvider>
+        </RealtimeProvider>
       </AuthProvider>
     </ThemeProvider>
   );

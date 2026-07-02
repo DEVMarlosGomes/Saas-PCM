@@ -25,10 +25,28 @@ import {
   Activity,
   BarChart2,
   Kanban,
+  HardHat,
+  Package,
+  Truck,
+  ShieldCheck,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import NotificacoesDropdown from "./shared/NotificacoesDropdown";
 import { getAlertasPreditivos } from "../lib/api";
+
+// ─── Grupos de roles ────────────────────────────────────────────────────────
+// Liderança de manutenção (exceto técnico operacional)
+const R_MANUT_LIDER = [
+  "admin", "gerente_industrial", "supervisor_manutencao",
+  "lider", "lider_manutencao_eletrica", "lider_manutencao_mecanica",
+  "analista_manutencao", "engenheiro_manutencao",
+];
+// Manutenção completa (inclui técnico)
+const R_MANUT_TODOS = [...R_MANUT_LIDER, "tecnico"];
+// Produção
+const R_PROD = ["operador", "lider_producao", "supervisor_producao"];
+// Tudo (exceto superusuário)
+const R_TODOS = [...R_MANUT_TODOS, ...R_PROD];
 
 const navSections = [
   {
@@ -40,57 +58,78 @@ const navSections = [
   {
     label: "Principal",
     items: [
-      { to: "/dashboard", icon: LayoutDashboard, label: "Dashboard", roles: ["admin"] },
-      { to: "/dashboard/lider", icon: LayoutDashboard, label: "Dashboard", roles: ["lider"] },
-      { to: "/dashboard/operador", icon: LayoutDashboard, label: "Dashboard", roles: ["tecnico", "operador"] },
+      { to: "/dashboard",          icon: LayoutDashboard, label: "Dashboard", roles: ["admin", "gerente_industrial"] },
+      { to: "/dashboard/lider",    icon: LayoutDashboard, label: "Dashboard", roles: ["lider", "lider_manutencao_eletrica", "lider_manutencao_mecanica", "supervisor_manutencao", "analista_manutencao", "engenheiro_manutencao"] },
+      { to: "/dashboard/operador", icon: LayoutDashboard, label: "Dashboard", roles: ["tecnico", "operador", "lider_producao", "supervisor_producao"] },
     ],
   },
   {
     label: "Operacional",
     items: [
-      { to: "/equipamentos", icon: Settings, label: "Equipamentos", roles: ["admin", "lider", "tecnico"] },
-      { to: "/ordens-servico", icon: Wrench, label: "Ordens de Serviço", roles: ["admin", "lider", "tecnico", "operador"] },
-      { to: "/kanban", icon: Kanban, label: "Kanban", roles: ["admin", "lider", "tecnico", "operador"] },
-      { to: "/planos-preventivos", icon: Calendar, label: "Manutenção Preventiva", roles: ["admin", "lider", "tecnico"] },
+      { to: "/equipamentos",        icon: Settings,       label: "Equipamentos",          roles: R_MANUT_TODOS },
+      { to: "/ordens-servico",      icon: Wrench,         label: "Ordens de Serviço",     roles: R_TODOS },
+      { to: "/kanban",              icon: Kanban,         label: "Kanban",                roles: R_TODOS },
+      { to: "/planos-preventivos",  icon: Calendar,       label: "Manutenção Preventiva", roles: R_MANUT_TODOS },
     ],
   },
   {
     label: "Inteligência",
     items: [
-      { to: "/preditivo", icon: Activity, label: "Análise Preditiva", roles: ["admin", "lider"] },
-      { to: "/relatorios", icon: BarChart2, label: "Relatórios", roles: ["admin", "lider"] },
+      { to: "/preditivo",  icon: Activity,  label: "Análise Preditiva", roles: R_MANUT_LIDER },
+      { to: "/relatorios", icon: BarChart2, label: "Relatórios",        roles: R_MANUT_LIDER },
     ],
   },
   {
     label: "Gestão",
     items: [
-      { to: "/usuarios", icon: Users, label: "Usuários", roles: ["admin", "lider"] },
-      { to: "/auditoria", icon: FileText, label: "Auditoria", roles: ["admin", "lider"] },
+      { to: "/colaboradores", icon: HardHat,   label: "Colaboradores", roles: ["admin", "gerente_industrial", "supervisor_manutencao", "lider"] },
+      { to: "/estoque",       icon: Package,      label: "Almoxarifado",  roles: R_MANUT_LIDER },
+      { to: "/fornecedores",  icon: Truck,        label: "Fornecedores",  roles: ["admin", "gerente_industrial", "supervisor_manutencao", "lider"] },
+      { to: "/evidencias",    icon: ShieldCheck,  label: "Evidências",    roles: R_MANUT_LIDER },
+      { to: "/usuarios",      icon: Users,     label: "Usuários",      roles: ["admin", "gerente_industrial"] },
+      { to: "/auditoria",     icon: FileText,  label: "Auditoria",     roles: ["admin", "gerente_industrial", "supervisor_manutencao", "lider"] },
     ],
   },
   {
     label: "Assinatura",
     items: [
-      { to: "/billing", icon: CreditCard, label: "Planos & Billing", roles: ["admin"] },
-      { to: "/settings", icon: Building2, label: "Configurações", roles: ["admin"] },
+      { to: "/billing",  icon: CreditCard, label: "Planos & Billing", roles: ["admin"] },
+      { to: "/settings", icon: Building2,  label: "Configurações",    roles: ["admin"] },
+      { to: "/mfa",      icon: ShieldCheck, label: "Auth. 2 Fatores", roles: R_TODOS },
     ],
   },
 ];
 
 const roleLabels = {
-  superusuario: "Superusuário",
-  admin: "Administrador",
-  lider: "Líder Técnico",
-  tecnico: "Técnico",
-  operador: "Operador",
+  superusuario:           "Superusuário",
+  admin:                  "Administrador",
+  gerente_industrial:     "Gerente Industrial",
+  supervisor_manutencao:  "Supervisor Manutenção",
+  lider_manutencao_eletrica: "Líder Elétrica",
+  lider_manutencao_mecanica: "Líder Mecânica",
+  analista_manutencao:    "Analista Manutenção",
+  engenheiro_manutencao:  "Engenheiro Manutenção",
+  lider:                  "Líder Técnico",
+  tecnico:                "Técnico",
+  lider_producao:         "Líder Produção",
+  supervisor_producao:    "Supervisor Produção",
+  operador:               "Operador",
 };
 
 const roleBadgeColors = {
-  superusuario: "bg-red-500/10 text-red-400 border-red-500/20",
-  admin: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-  lider: "bg-purple-500/10 text-purple-500 border-purple-500/20",
-  tecnico: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
-  operador: "bg-amber-500/10 text-amber-500 border-amber-500/20",
+  superusuario:              "bg-red-500/10 text-red-400 border-red-500/20",
+  admin:                     "bg-blue-500/10 text-blue-500 border-blue-500/20",
+  gerente_industrial:        "bg-indigo-500/10 text-indigo-500 border-indigo-500/20",
+  supervisor_manutencao:     "bg-violet-500/10 text-violet-500 border-violet-500/20",
+  lider_manutencao_eletrica: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
+  lider_manutencao_mecanica: "bg-orange-500/10 text-orange-500 border-orange-500/20",
+  analista_manutencao:       "bg-teal-500/10 text-teal-500 border-teal-500/20",
+  engenheiro_manutencao:     "bg-cyan-500/10 text-cyan-500 border-cyan-500/20",
+  lider:                     "bg-purple-500/10 text-purple-500 border-purple-500/20",
+  tecnico:                   "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+  lider_producao:            "bg-green-500/10 text-green-500 border-green-500/20",
+  supervisor_producao:       "bg-lime-500/10 text-lime-500 border-lime-500/20",
+  operador:                  "bg-amber-500/10 text-amber-500 border-amber-500/20",
 };
 
 export default function AppLayout() {
@@ -137,18 +176,20 @@ export default function AppLayout() {
     const path = location.pathname.replace("/", "");
     const map = {
       dashboard: "Dashboard",
-      "dashboard/operador": "Dashboard do Operador",
-      "dashboard/lider": "Dashboard do Líder",
+      "dashboard/operador": "Dashboard Operacional",
+      "dashboard/lider": "Dashboard de Manutenção",
       equipamentos: "Equipamentos",
       "ordens-servico": "Ordens de Serviço",
       "planos-preventivos": "Manutenção Preventiva",
       preditivo: "Análise Preditiva",
       relatorios: "Relatórios",
       kanban: "Kanban de OS",
+      colaboradores: "Colaboradores",
       usuarios: "Usuários",
       auditoria: "Auditoria",
       billing: "Planos & Billing",
       settings: "Configurações",
+      mfa: "Autenticação em 2 Fatores",
       superuser: "Portal Plataforma",
     };
     return map[path] || "Aurix";

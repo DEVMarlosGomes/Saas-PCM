@@ -9,6 +9,7 @@ import {
   FileText, Download, Lock, Filter, TrendingUp, CheckCircle2,
   AlertTriangle, Clock, DollarSign, Wrench, BarChart2, Calendar, Loader2, Printer, Info,
 } from "lucide-react";
+import { HelpTooltip } from "../components/shared/HelpTooltip";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { toast } from "sonner";
@@ -290,10 +291,13 @@ function fmtMes(yyyymm) {
   return `${meses[parseInt(m, 10) - 1] || m}/${y}`;
 }
 
-function KpiCard({ label, value, accent }) {
+function KpiCard({ label, value, accent, tooltip }) {
   return (
     <div className="bg-card border border-border/50 rounded-xl p-4 flex flex-col gap-1" data-testid={`kpi-custo-${label.toLowerCase().replace(/ /g, "-")}`}>
-      <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider">{label}</p>
+      <p className="text-[10px] text-muted-foreground uppercase font-semibold tracking-wider flex items-center">
+        {label}
+        {tooltip && <HelpTooltip text={tooltip} />}
+      </p>
       <p className={`text-xl font-heading font-bold ${accent || ""}`}>{value}</p>
     </div>
   );
@@ -326,10 +330,14 @@ function AnaliseCustos({ cp }) {
 
       {/* 4 KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="custos-kpi-cards">
-        <KpiCard label="Materiais / Peças" value={fmtBRL(custo_materiais_total)} />
-        <KpiCard label="Mão de Obra"       value={fmtBRL(custo_mao_obra_total)} />
-        <KpiCard label="Parada de Máquina" value={fmtBRL(custo_parada_total)} accent="text-red-500" />
-        <KpiCard label="Impacto Total"     value={fmtBRL(custo_total)} accent="text-primary" />
+        <KpiCard label="Materiais / Peças" value={fmtBRL(custo_materiais_total)}
+          tooltip="Custo acumulado de peças e materiais consumidos em todas as OS do período." />
+        <KpiCard label="Mão de Obra" value={fmtBRL(custo_mao_obra_total)}
+          tooltip="Custo de mão de obra calculado com base no valor/hora de cada técnico e o tempo de atendimento." />
+        <KpiCard label="Parada de Máquina" value={fmtBRL(custo_parada_total)} accent="text-red-500"
+          tooltip="Custo financeiro das horas de parada de produção. Calculado com valor/hora configurado em cada equipamento." />
+        <KpiCard label="Impacto Total" value={fmtBRL(custo_total)} accent="text-primary"
+          tooltip="Soma total de materiais + mão de obra + custo de parada. Representa o impacto financeiro real das falhas no período." />
       </div>
 
       {/* Gráfico de barras empilhadas por mês */}
