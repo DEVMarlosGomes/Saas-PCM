@@ -31,6 +31,7 @@ import SuperuserPage from "./pages/SuperuserPage";
 import EstoquePage from "./pages/EstoquePage";
 import FornecedoresPage from "./pages/FornecedoresPage";
 import EvidenciasPage from "./pages/EvidenciasPage";
+import MFAPage from "./pages/MFAPage";
 
 // Layout
 import AppLayout from "./components/AppLayout";
@@ -264,6 +265,7 @@ function AppRoutes() {
         <Route path="kanban" element={<KanbanPage />} />
         <Route path="billing" element={<BillingPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="mfa" element={<MFAPage />} />
         <Route path="superuser" element={<SuperuserPage />} />
       </Route>
 

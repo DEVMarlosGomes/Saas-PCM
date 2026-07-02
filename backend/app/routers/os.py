@@ -385,13 +385,33 @@ async def create_os(data: OSCreate, user: User = Depends(get_current_user), db: 
 @router.put("/ordens-servico/{os_id}", response_model=OSResponse)
 
 @router.patch("/ordens-servico/{os_id}", response_model=OSResponse)
-async def update_os(os_id: str, data: OSUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+async def update_os(os_id: str, data: OSUpdate, request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     os = db.query(OrdemServico).filter(
         OrdemServico.id == os_id,
         OrdemServico.organization_id == user.organization_id
     ).first()
     if not os:
         raise HTTPException(status_code=404, detail="OS não encontrada")
+
+    # Offline sync conflict detection: if client sent a timestamp, check if
+    # server record was updated after the client's last known state.
+    client_ts_header = request.headers.get("X-Client-Timestamp")
+    if client_ts_header and request.headers.get("X-Offline-Sync"):
+        try:
+            client_ts_ms = int(client_ts_header)
+            if os.updated_at:
+                server_ts_ms = int(os.updated_at.timestamp() * 1000)
+                if server_ts_ms > client_ts_ms:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "conflict": True,
+                            "message": "OS atualizada por outro usuário desde o último sync",
+                            "server_updated_at": os.updated_at.isoformat(),
+                        },
+                    )
+        except (ValueError, AttributeError):
+            pass  # Timestamp inválido — ignora e processa normalmente
 
     import json as json_lib
     now = datetime.now(timezone.utc)

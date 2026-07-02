@@ -37,6 +37,7 @@ DDL = [
     "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinatura_hash VARCHAR(64)",
     "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinado_por UUID",
     "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS assinado_em TIMESTAMPTZ",
+    "ALTER TABLE ordens_servico ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ",
     "ALTER TABLE custos_os ADD COLUMN IF NOT EXISTS criado_por UUID REFERENCES users(id)",
     "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES equipamentos(id)",
     "ALTER TABLE equipamentos ADD COLUMN IF NOT EXISTS nivel VARCHAR(20) DEFAULT 'maquina'",
@@ -89,6 +90,78 @@ DDL = [
         UNIQUE(os_id, matricula)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_os_excecoes_area_os ON os_excecoes_area (os_id)",
+    # Fase 5.2 — MFA TOTP
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_backup_codes TEXT",  # JSON array de hashes
+    # Fase 5.1 — SSO OIDC
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sso_enabled BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sso_provider VARCHAR(20)",     # google|azure|saml
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS oidc_client_id TEXT",
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS oidc_client_secret TEXT",
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS oidc_discovery_url TEXT",
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS saml_metadata_url TEXT",
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS sso_required BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_sub VARCHAR(255)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_provider VARCHAR(20)",
+    # Fase 5.3 — RBAC customizável
+    """CREATE TABLE IF NOT EXISTS papeis (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        nome VARCHAR(80) NOT NULL,
+        descricao TEXT,
+        is_preset BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(organization_id, nome)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_papeis_org ON papeis (organization_id)",
+    """CREATE TABLE IF NOT EXISTS permissoes (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        recurso VARCHAR(80) NOT NULL,
+        acao VARCHAR(40) NOT NULL,
+        descricao TEXT,
+        UNIQUE(recurso, acao)
+    )""",
+    """CREATE TABLE IF NOT EXISTS papel_permissoes (
+        papel_id UUID NOT NULL REFERENCES papeis(id) ON DELETE CASCADE,
+        permissao_id UUID NOT NULL REFERENCES permissoes(id) ON DELETE CASCADE,
+        PRIMARY KEY(papel_id, permissao_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS usuario_papeis (
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        papel_id UUID NOT NULL REFERENCES papeis(id) ON DELETE CASCADE,
+        granted_at TIMESTAMPTZ DEFAULT now(),
+        granted_by UUID REFERENCES users(id),
+        PRIMARY KEY(user_id, papel_id)
+    )""",
+    # Fase 5.5 — LGPD
+    """CREATE TABLE IF NOT EXISTS lgpd_consentimentos (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        organization_id UUID NOT NULL REFERENCES organizations(id),
+        finalidade VARCHAR(100) NOT NULL,
+        consentiu BOOLEAN NOT NULL,
+        ip VARCHAR(45),
+        user_agent TEXT,
+        registrado_em TIMESTAMPTZ DEFAULT now()
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_lgpd_consent_user ON lgpd_consentimentos (user_id)",
+    """CREATE TABLE IF NOT EXISTS lgpd_solicitacoes (
+        id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id),
+        organization_id UUID NOT NULL REFERENCES organizations(id),
+        tipo VARCHAR(30) NOT NULL,   -- exportacao | exclusao | retificacao
+        status VARCHAR(20) DEFAULT 'pendente',
+        solicitado_em TIMESTAMPTZ DEFAULT now(),
+        processado_em TIMESTAMPTZ,
+        resposta TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_lgpd_sol_user ON lgpd_solicitacoes (user_id)",
+    # WhatsApp opt-in
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_numero VARCHAR(20)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS whatsapp_optin BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS whatsapp_enabled BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE organizations ADD COLUMN IF NOT EXISTS whatsapp_api_token TEXT",
 ]
 
 ALTER_TYPES = [

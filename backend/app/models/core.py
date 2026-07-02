@@ -275,6 +275,7 @@ class OrdemServico(Base):
     assinatura_hash = Column(String(64), nullable=True)
     assinado_por = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     assinado_em = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=True)
 
     __table_args__ = (Index("idx_os_org", "organization_id"),)
 

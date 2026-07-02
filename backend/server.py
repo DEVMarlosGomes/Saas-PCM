@@ -70,6 +70,7 @@ from app.routers import (
     equipamentos, os, custos, preventivos, iot,
     dashboard, auditoria, notificacoes, billing,
     preditivo, relatorios, kanban, superuser, seed,
+    mfa, lgpd, rbac, sso,
 )
 from app.routers.estoque import router as _estoque_router, get_current_user_stub as _estoque_stub
 from app.routers.evidencias import router as _evidencias_router, get_current_user_stub as _evidencias_stub
@@ -80,6 +81,7 @@ for _r in (
     preventivos.router, iot.router, dashboard.router, auditoria.router,
     notificacoes.router, billing.router, preditivo.router, relatorios.router,
     kanban.router, superuser.router, seed.router,
+    mfa.router, lgpd.router, rbac.router, sso.router,
 ):
     app.include_router(_r, prefix="/api")
 

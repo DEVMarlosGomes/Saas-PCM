@@ -282,4 +282,40 @@ export const getSuperuserDashboard = () => api.get('/superuser/dashboard');
 // ─── Seed Demo ────────────────────────────────────────────
 export const seedDemo = (reset = false) => api.post(`/seed-demo${reset ? '?reset=true' : ''}`);
 
+// ─── MFA (Fase 5.2) ───────────────────────────────────────
+export const mfaSetup = () => api.post('/auth/mfa/setup');
+export const mfaEnable = (code) => api.post('/auth/mfa/enable', { code });
+export const mfaVerify = (code) => api.post('/auth/mfa/verify', { code });
+export const mfaDisable = (password, code) => api.post('/auth/mfa/disable', { password, code });
+export const mfaBackupCount = () => api.get('/auth/mfa/backup-codes');
+export const mfaUseBackup = (code) => api.post('/auth/mfa/use-backup', { code });
+
+// ─── LGPD (Fase 5.5) ──────────────────────────────────────
+export const lgpdExport = () => api.get('/lgpd/export', { responseType: 'blob' });
+export const lgpdDeleteRequest = (motivo) => api.post('/lgpd/delete-request', { motivo, confirmar: true });
+export const lgpdListRequests = () => api.get('/lgpd/requests');
+export const lgpdConsent = (finalidade, consentiu) => api.post('/lgpd/consent', { finalidade, consentiu });
+export const lgpdListConsents = () => api.get('/lgpd/consent');
+
+// ─── RBAC (Fase 5.3) ──────────────────────────────────────
+export const rbacPermissoes = () => api.get('/rbac/permissoes');
+export const rbacPapeis = () => api.get('/rbac/papeis');
+export const rbacCreatePapel = (data) => api.post('/rbac/papeis', data);
+export const rbacSetPermissoes = (id, permissao_ids) => api.put(`/rbac/papeis/${id}/permissoes`, { permissao_ids });
+export const rbacAtribuirPapel = (papelId, user_id) => api.post(`/rbac/papeis/${papelId}/usuarios`, { user_id });
+export const rbacRemoverPapel = (papelId, uid) => api.delete(`/rbac/papeis/${papelId}/usuarios/${uid}`);
+export const rbacMe = () => api.get('/rbac/me');
+
+// ─── SSO (Fase 5.1) ───────────────────────────────────────
+export const ssoProviders = () => api.get('/auth/sso/providers');
+export const ssoConfigura = (data) => api.post('/auth/sso/configure', data);
+
+// ─── Exportações (Fase 5.4) ───────────────────────────────
+export const exportarOSPDF = (params) =>
+  api.get('/relatorios/os/export/pdf', { params, responseType: 'blob' });
+export const exportarOSExcel = (params) =>
+  api.get('/relatorios/os/export/excel', { params, responseType: 'blob' });
+export const exportarKPIPDF = (params) =>
+  api.get('/relatorios/kpi/export/pdf', { params, responseType: 'blob' });
+
 export default api;

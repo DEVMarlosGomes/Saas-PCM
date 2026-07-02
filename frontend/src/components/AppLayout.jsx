@@ -95,6 +95,7 @@ const navSections = [
     items: [
       { to: "/billing",  icon: CreditCard, label: "Planos & Billing", roles: ["admin"] },
       { to: "/settings", icon: Building2,  label: "Configurações",    roles: ["admin"] },
+      { to: "/mfa",      icon: ShieldCheck, label: "Auth. 2 Fatores", roles: R_TODOS },
     ],
   },
 ];
@@ -188,6 +189,7 @@ export default function AppLayout() {
       auditoria: "Auditoria",
       billing: "Planos & Billing",
       settings: "Configurações",
+      mfa: "Autenticação em 2 Fatores",
       superuser: "Portal Plataforma",
     };
     return map[path] || "Aurix";

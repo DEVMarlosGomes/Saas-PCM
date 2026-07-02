@@ -736,3 +736,161 @@ class LeiturasBulk(BaseModel):
 
 class AlertaIgnorar(BaseModel):
     motivo: str
+
+
+# ── Exportações PDF / Excel (Fase 5.4) ───────────────────────────────────────
+
+@router.get("/relatorios/os/export/pdf")
+def exportar_os_pdf(
+    data_inicio: Optional[str] = Query(None),
+    data_fim: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from ..services.report_service import generate_os_pdf
+    from fastapi.responses import StreamingResponse
+    import io
+
+    check_plan_feature(current_user, db, "exportacao_pdf")
+
+    query = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == current_user.organization_id
+    )
+    if status:
+        query = query.filter(OrdemServico.status == status)
+    if data_inicio:
+        query = query.filter(OrdemServico.created_at >= data_inicio)
+    if data_fim:
+        query = query.filter(OrdemServico.created_at <= data_fim)
+
+    os_objs = query.order_by(OrdemServico.created_at.desc()).limit(1000).all()
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    org_nome = org.nome if org else "AURIX"
+    periodo = f"{data_inicio or '...'} — {data_fim or '...'}"
+
+    os_list = [
+        {
+            "numero": o.numero, "equipamento_nome": o.equipamento_nome,
+            "tipo": o.tipo.value if o.tipo else "", "status": o.status.value if o.status else "",
+            "prioridade": o.prioridade.value if o.prioridade else "",
+            "created_at": str(o.created_at), "tecnico_nome": o.tecnico_nome,
+            "tempo_reparo": o.tempo_reparo, "solucao": o.solucao, "custo_parada": o.custo_parada,
+        }
+        for o in os_objs
+    ]
+
+    pdf_bytes = generate_os_pdf(os_list, org_nome, periodo)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=os_{data_inicio or 'all'}_{data_fim or 'all'}.pdf"},
+    )
+
+
+@router.get("/relatorios/os/export/excel")
+def exportar_os_excel(
+    data_inicio: Optional[str] = Query(None),
+    data_fim: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from ..services.report_service import generate_os_excel
+    from fastapi.responses import StreamingResponse
+    import io
+
+    check_plan_feature(current_user, db, "exportacao_pdf")
+
+    query = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == current_user.organization_id
+    )
+    if status:
+        query = query.filter(OrdemServico.status == status)
+    if data_inicio:
+        query = query.filter(OrdemServico.created_at >= data_inicio)
+    if data_fim:
+        query = query.filter(OrdemServico.created_at <= data_fim)
+
+    os_objs = query.order_by(OrdemServico.created_at.desc()).limit(1000).all()
+    org = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    org_nome = org.nome if org else "AURIX"
+    periodo = f"{data_inicio or '...'} — {data_fim or '...'}"
+
+    os_list = [
+        {
+            "numero": o.numero, "equipamento_nome": o.equipamento_nome,
+            "tipo": o.tipo.value if o.tipo else "", "status": o.status.value if o.status else "",
+            "prioridade": o.prioridade.value if o.prioridade else "",
+            "created_at": str(o.created_at), "tecnico_nome": o.tecnico_nome,
+            "tempo_reparo": o.tempo_reparo, "solucao": o.solucao, "custo_parada": o.custo_parada,
+        }
+        for o in os_objs
+    ]
+
+    xlsx_bytes = generate_os_excel(os_list, org_nome, periodo)
+    return StreamingResponse(
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=os_{data_inicio or 'all'}_{data_fim or 'all'}.xlsx"},
+    )
+
+
+@router.get("/relatorios/kpi/export/pdf")
+def exportar_kpi_pdf(
+    mes: Optional[int] = Query(None),
+    ano: Optional[int] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from ..services.report_service import generate_kpi_pdf
+    from fastapi.responses import StreamingResponse
+    import io
+    from datetime import datetime
+
+    check_plan_feature(current_user, db, "exportacao_pdf")
+
+    now = datetime.now()
+    mes = mes or now.month
+    ano = ano or now.year
+
+    # Reusa lógica do endpoint de dashboard KPIs
+    org_id = current_user.organization_id
+    start = datetime(ano, mes, 1, tzinfo=timezone.utc)
+    end = datetime(ano, mes + 1, 1, tzinfo=timezone.utc) if mes < 12 else datetime(ano + 1, 1, 1, tzinfo=timezone.utc)
+
+    os_mes = db.query(OrdemServico).filter(
+        OrdemServico.organization_id == org_id,
+        OrdemServico.created_at >= start,
+        OrdemServico.created_at < end,
+    ).all()
+
+    abertas = [o for o in os_mes if o.status and o.status.value not in ("fechada", "cancelada")]
+    atrasadas = [
+        o for o in abertas
+        if o.prazo_sla and o.prazo_sla < datetime.now(timezone.utc)
+    ]
+    tempos = [o.tempo_reparo for o in os_mes if o.tempo_reparo]
+    mttr = sum(tempos) / len(tempos) / 60 if tempos else 0
+    custos = [o.custo_parada or 0 for o in os_mes]
+
+    kpis = {
+        "total_os_mes": len(os_mes),
+        "os_abertas": len(abertas),
+        "os_atrasadas": len(atrasadas),
+        "mttr": round(mttr, 1),
+        "mtbf": 0,
+        "disponibilidade": 0,
+        "custo_total_mes": sum(custos),
+    }
+
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    org_nome = org.nome if org else "AURIX"
+    periodo = f"{mes:02d}/{ano}"
+
+    pdf_bytes = generate_kpi_pdf(kpis, org_nome, periodo)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=kpi_{periodo.replace('/', '-')}.pdf"},
+    )
