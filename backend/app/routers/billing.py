@@ -136,47 +136,44 @@ async def create_billing_checkout(data: CheckoutRequest, request: Request, user:
     cancel_url = f"{origin_url}/billing"
     
     import json as json_lib
+    import stripe as _stripe
     try:
-        from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
-        
-        api_key = os.environ.get("STRIPE_API_KEY", "")
-        host_url = str(request.base_url).rstrip("/")
-        webhook_url = f"{host_url}/api/webhook/stripe"
-        
-        stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
-        
-        checkout_request = CheckoutSessionRequest(
-            amount=float(amount),
-            currency="usd",
+        _stripe.api_key = os.environ.get("STRIPE_API_KEY", "")
+
+        metadata = {
+            "organization_id": str(org.id),
+            "plan": target_plan.value,
+            "user_id": str(user.id),
+        }
+        session = _stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": int(float(amount) * 100),
+                    "product_data": {"name": f"AURIX — Plano {target_plan.value.title()}"},
+                },
+                "quantity": 1,
+            }],
+            mode="payment",
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={
-                "organization_id": str(org.id),
-                "plan": target_plan.value,
-                "user_id": str(user.id),
-            }
+            metadata=metadata,
         )
-        
-        session = await stripe_checkout.create_checkout_session(checkout_request)
-        
-        # Create pending transaction record
+
         transaction = PaymentTransaction(
             organization_id=org.id,
-            session_id=session.session_id,
+            session_id=session.id,
             plan=target_plan.value,
             amount=float(amount),
             currency="usd",
             payment_status="pending",
-            metadata_json=json_lib.dumps({
-                "organization_id": str(org.id),
-                "plan": target_plan.value,
-                "user_id": str(user.id),
-            })
+            metadata_json=json_lib.dumps(metadata),
         )
         db.add(transaction)
         db.commit()
-        
-        return {"url": session.url, "session_id": session.session_id}
+
+        return {"url": session.url, "session_id": session.id}
     except Exception as e:
         logger.error(f"Stripe checkout error: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao criar sessão de pagamento: {str(e)}")
