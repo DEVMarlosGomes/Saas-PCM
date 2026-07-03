@@ -91,6 +91,8 @@ frontend/node_modules/.cache/default-development/8.pack
 .env
 .env.*
 *.env
+# Exceção: .env.production não contém segredos (apenas URL pública do backend)
+!frontend/.env.production
 credentials.json
 *.pem
 *.key

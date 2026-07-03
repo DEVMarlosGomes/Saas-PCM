@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: aurix-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://aurixpcm.vercel.app
+      - key: JWT_SECRET
+        sync: false          # definido manualmente no dashboard (segredo)
+      - key: DATABASE_URL
+        sync: false          # definido manualmente no dashboard (segredo)
+      - key: MFA_ENCRYPTION_KEY
+        sync: false          # definido manualmente no dashboard (segredo)
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
