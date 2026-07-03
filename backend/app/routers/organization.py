@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, Query
+from ..middleware.rate_limiter import limiter, LIMIT_AUTH, LIMIT_BILLING, LIMIT_IOT, LIMIT_APIKEY, LIMIT_STRICT
 from sqlalchemy.orm import Session
 
 from ..deps import (
