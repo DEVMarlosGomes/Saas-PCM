@@ -40,6 +40,8 @@ class Settings(BaseSettings):
 
     # ── Frontend / CORS ───────────────────────────────────────────────────────
     FRONTEND_URL: str = "http://localhost:3000"   # obrigatório em produção
+    # Origens extras sempre permitidas (não secretas — URLs públicas do deploy)
+    CORS_EXTRA_ORIGINS: str = "https://aurixpcm.vercel.app"
 
     # ── Stripe (opcional em dev, obrigatório em prod se billing ativo) ───────
     STRIPE_SECRET_KEY: str | None = None
@@ -102,6 +104,11 @@ class Settings(BaseSettings):
         origins = [o.strip() for o in raw.split(",") if o.strip()]
         if not origins:
             origins = ["http://localhost:3000"]
+        # Adiciona origens extras configuradas (default: URL de produção no Vercel)
+        for extra in self.CORS_EXTRA_ORIGINS.split(","):
+            extra = extra.strip()
+            if extra and extra not in origins:
+                origins.append(extra)
         return origins
 
     def log_security_status(self) -> None:
