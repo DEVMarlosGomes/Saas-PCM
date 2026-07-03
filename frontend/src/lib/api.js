@@ -8,6 +8,7 @@ const USER_KEY  = 'aurix_user';
 const api = axios.create({
   baseURL: `${API}/api`,
   headers: { 'Content-Type': 'application/json' },
+  timeout: 60000, // 60s — server pode hibernar no free tier
 });
 
 // ─── Interceptor de request: injeta JWT ──────────────────
@@ -34,6 +35,22 @@ export function onUpgradeRequired(fn) {
 
 function notifyUpgrade(detail) {
   upgradeListeners.forEach((fn) => fn(detail));
+}
+
+// ─── Wake-up: pinga o backend e aguarda ele acordar (Render free tier) ───────
+export async function waitForServer(onProgress) {
+  const url = `${API}/api/health`;
+  for (let i = 0; i < 6; i++) {
+    try {
+      const res = await axios.get(url, { timeout: 12000 });
+      if (res.status === 200) return true;
+    } catch {
+      // ainda hibernando
+    }
+    if (onProgress) onProgress(i + 1);
+    await new Promise((r) => setTimeout(r, 10000));
+  }
+  return false;
 }
 
 // ─── Interceptor de response: refresh 401 + upgrade 402 ──

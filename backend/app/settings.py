@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = ""             # obrigatório em produção
 
     # ── Frontend / CORS ───────────────────────────────────────────────────────
-    FRONTEND_URL: str = "http://localhost:3000"   # obrigatório em produção
-    # Origens extras sempre permitidas (não secretas — URLs públicas do deploy)
-    CORS_EXTRA_ORIGINS: str = "https://aurixpcm.vercel.app"
+    # Default inclui URL de produção — sem precisar de env var no servidor
+    FRONTEND_URL: str = "http://localhost:3000,https://aurixpcm.vercel.app"
+    CORS_EXTRA_ORIGINS: str = ""   # origens adicionais opcionais, separadas por vírgula
 
     # ── Stripe (opcional em dev, obrigatório em prod se billing ativo) ───────
     STRIPE_SECRET_KEY: str | None = None
@@ -79,8 +79,9 @@ class Settings(BaseSettings):
             erros.append("JWT_SECRET")
         if not self.DATABASE_URL:
             erros.append("DATABASE_URL")
-        if not self.FRONTEND_URL or self.FRONTEND_URL == "http://localhost:3000":
-            erros.append("FRONTEND_URL (não pode ser localhost em produção)")
+        non_local = [u for u in self.FRONTEND_URL.split(",") if "localhost" not in u and u.strip()]
+        if not non_local:
+            erros.append("FRONTEND_URL (deve conter ao menos uma origem não-localhost em produção)")
 
         if erros:
             msg = (

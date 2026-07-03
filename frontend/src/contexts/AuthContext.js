@@ -23,10 +23,31 @@ function formatApiErrorDetail(detail) {
   return String(detail);
 }
 
+function isNetworkError(error) {
+  return !error.response && (error.code === 'ERR_NETWORK' || error.code === 'ECONNABORTED' || error.message === 'Network Error');
+}
+
 function formatRequestError(error) {
+  if (isNetworkError(error))
+    return 'Servidor iniciando, aguarde alguns segundos e tente novamente.';
   if (!error.response)
-    return `Não foi possível conectar ao servidor Aurix em ${API}. Verifique se a API está rodando.`;
+    return `Não foi possível conectar ao servidor. Verifique sua conexão.`;
   return formatApiErrorDetail(error.response?.data?.detail) || error.message;
+}
+
+async function loginWithRetry(email, password, maxRetries = 2) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const { data } = await axios.post(`${API}/api/auth/login`, { email, password }, { timeout: 30000 });
+      return { ok: true, data };
+    } catch (e) {
+      if (isNetworkError(e) && attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 8000 * (attempt + 1)));
+        continue;
+      }
+      return { ok: false, error: e };
+    }
+  }
 }
 
 let accessToken = null;
@@ -85,21 +106,19 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => { checkAuth(); }, [checkAuth]);
 
   const login = async (email, password) => {
-    try {
-      const { data } = await axios.post(`${API}/api/auth/login`, { email, password });
-      const token = data.access_token || data.token;
-      if (token) {
-        setAccessToken(token);
-        localStorage.setItem(TOKEN_KEY, token);
-      }
-      localStorage.setItem(USER_KEY, JSON.stringify(data));
-      setUser(data);
-      setNeedsTechnicianSession(!!data.needs_technician_session);
-      setLoading(false);
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: formatRequestError(e) };
+    const result = await loginWithRetry(email, password);
+    if (!result.ok) return { success: false, error: formatRequestError(result.error) };
+    const { data } = result;
+    const token = data.access_token || data.token;
+    if (token) {
+      setAccessToken(token);
+      localStorage.setItem(TOKEN_KEY, token);
     }
+    localStorage.setItem(USER_KEY, JSON.stringify(data));
+    setUser(data);
+    setNeedsTechnicianSession(!!data.needs_technician_session);
+    setLoading(false);
+    return { success: true };
   };
 
   const completeTechnicianSession = async (sector, employeeId) => {

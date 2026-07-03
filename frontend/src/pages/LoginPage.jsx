@@ -19,6 +19,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState("Entrando...");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,8 +28,13 @@ export default function LoginPage() {
       return;
     }
     setLoading(true);
+    setLoadingMsg("Entrando...");
+    // Dá feedback se o servidor demorar (free tier hibernando)
+    const timer = setTimeout(() => setLoadingMsg("Aguardando servidor iniciar..."), 6000);
     const result = await login(email, password);
+    clearTimeout(timer);
     setLoading(false);
+    setLoadingMsg("Entrando...");
     if (!result.success) {
       toast.error(result.error);
     }
@@ -163,7 +169,7 @@ export default function LoginPage() {
               {loading ? (
                 <span className="flex items-center gap-2">
                   <span className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Entrando...
+                  {loadingMsg}
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
