@@ -57,6 +57,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             )
 
         # Remove header que expõe versão do servidor
-        response.headers.pop("Server", None)
+        if "Server" in response.headers:
+            del response.headers["Server"]
 
         return response
