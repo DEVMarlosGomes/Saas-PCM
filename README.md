@@ -1,72 +1,7 @@
 <a id="topo"></a>
 
 <div align="center">
-<svg width="1600" height="520" viewBox="0 0 1600 520" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="520" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#071426"/>
-      <stop offset="0.52" stop-color="#0B2447"/>
-      <stop offset="1" stop-color="#123B68"/>
-    </linearGradient>
-    <linearGradient id="accent" x1="480" y1="100" x2="1180" y2="420" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#60A5FA"/>
-      <stop offset="1" stop-color="#22D3EE"/>
-    </linearGradient>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="14" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#60A5FA" stroke-opacity="0.08" stroke-width="1"/>
-    </pattern>
-  </defs>
 
-  <rect width="1600" height="520" rx="28" fill="url(#bg)"/>
-  <rect width="1600" height="520" rx="28" fill="url(#grid)"/>
-
-  <circle cx="1430" cy="82" r="210" fill="#2563EB" fill-opacity="0.08"/>
-  <circle cx="120" cy="474" r="260" fill="#22D3EE" fill-opacity="0.05"/>
-
-  <g opacity="0.22" stroke="#7DD3FC" stroke-width="2">
-    <path d="M90 400H420L510 310H720"/>
-    <path d="M1120 118H1370L1450 198H1540"/>
-    <path d="M1050 430H1320L1400 350H1545"/>
-  </g>
-
-  <g transform="translate(164 116)">
-    <circle cx="104" cy="144" r="92" stroke="url(#accent)" stroke-width="14" opacity="0.9"/>
-    <circle cx="104" cy="144" r="38" fill="url(#accent)" opacity="0.92"/>
-    <g stroke="#93C5FD" stroke-width="18" stroke-linecap="round">
-      <path d="M104 24V54"/>
-      <path d="M104 234V264"/>
-      <path d="M-16 144H14"/>
-      <path d="M194 144H224"/>
-      <path d="M19 59L40 80"/>
-      <path d="M168 208L189 229"/>
-      <path d="M19 229L40 208"/>
-      <path d="M168 80L189 59"/>
-    </g>
-  </g>
-
-  <text x="510" y="218" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="116" font-weight="800" letter-spacing="16">AURIX</text>
-  <rect x="514" y="247" width="570" height="6" rx="3" fill="url(#accent)" filter="url(#glow)"/>
-  <text x="514" y="315" fill="#BAE6FD" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="600" letter-spacing="2">
-    GESTÃO DE MANUTENÇÃO INDUSTRIAL
-  </text>
-  <text x="514" y="374" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="25">
-    Ativos • Ordens de Serviço • Confiabilidade • Analytics
-  </text>
-
-  <g transform="translate(1260 315)">
-    <rect x="0" y="0" width="210" height="78" rx="18" fill="#0F172A" fill-opacity="0.66" stroke="#60A5FA" stroke-opacity="0.42"/>
-    <circle cx="38" cy="39" r="10" fill="#22C55E"/>
-    <text x="62" y="32" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700">OPERAÇÃO</text>
-    <text x="62" y="54" fill="#86EFAC" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">CONECTADA</text>
-  </g>
-</svg>
 <img src="docs/aurix-banner.svg" width="100%" alt="AURIX — Plataforma SaaS para Gestão de Manutenção Industrial"/>
 
 <br>
@@ -1537,4 +1472,4 @@ Desenvolvido por Marlos Gomes com foco em aplicações empresariais, automação
 
 Voltar ao topo
 
-</div><img width="1600" height="520" alt="aurix-banner" src="https://github.com/user-attachments/assets/282f0a11-a049-4667-acbc-73c3cc7a39ae" />
+</div>
