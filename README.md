@@ -1,490 +1,1365 @@
-# AURI— Gestão de Manutenção Industrial
+<div align="center">
 
-> Plataforma SaaS multi-tenant para Planejamento e Controle de Manutenção (PCM) industrial. Rastreie ordens de serviço, equipamentos, manutenção preventiva, análise preditiva e muito mais — com billing integrado e controle de acesso por papel.
+AURIX
 
----
+Plataforma SaaS para Gestão de Manutenção Industrial
 
-## Visão Geral
+Ativos, equipes, ordens de serviço e indicadores de manutenção reunidos em um único ambiente operacional.
 
-AURIX é uma aplicação web voltada para equipes de manutenção industrial. Cada empresa (organização) opera em seu próprio ambiente isolado (multi-tenancy via `organization_id`). A plataforma oferece:
 
-- **Ordens de Serviço (OS)** com ciclo de vida completo e grupos de falha
-- **Kanban** em tempo real com temporizadores de SLA e downtime
-- **Dashboards** segmentados por papel (Admin, Líder, Operador)
-- **Manutenção Preventiva** com planos e gatilhos automáticos
-- **Análise Preditiva** com alertas críticos
-- **Relatórios** com gráfico de Pareto e exportação
-- **Billing** com 5 planos de assinatura via Stripe
-- **RBAC** com 5 papéis hierárquicos
-- **Login genérico de técnico** por setor (compartilhado)
 
----
+Tecnologia aplicada à confiabilidade, disponibilidade e eficiência da manutenção industrial.
 
-## Funcionalidades
+</div>
 
-### Ordens de Serviço
-- Criação com tipo (corretiva/preventiva), prioridade, equipamento, grupo de falha e setor
-- Bloqueio por `failure_group` duplicado no mesmo equipamento (retorna 409 com grupos disponíveis)
-- Registro de ocorrências (`downtime_start` imutável após primeiro registro)
-- Cálculo automático de `response_time_min` ao mudar para `em_atendimento`
-- Filtros avançados: status, prioridade, tipo, setor, busca textual
+Sumário
 
-### Dashboards
-- **Admin**: KPIs globais — OS abertas, em andamento, concluídas, taxa de resolução, eficiência, MTTR, MTBF
-- **Líder**: KPIs + financeiro — custo de manutenção, relatório Pareto por grupo de falha
-- **Operador/Técnico**: OS do turno, equipamentos críticos, tempo de resposta médio, alerta de SLA
+Sobre o AURIX
 
-### Equipamentos
-- Cadastro com código, setor, modelo, fabricante, data de instalação
-- Histórico de manutenções e indicadores de criticidade
+Visão do produto
 
-### Análise Preditiva
-- Alertas com severidade (CRITICO, ALTO, MEDIO)
-- Badge de alertas críticos no sidebar (polling a cada 60s)
+Indicadores do projeto
 
-### Manutenção Preventiva
-- Planos com frequência, responsável e gatilhos automáticos
-- Geração automática de OS preventiva
+Principais funcionalidades
 
-### Relatórios
-- Pareto de falhas por grupo
-- Filtros por período e setor
-- Exportação
+Fluxo operacional
 
-### Billing
-- 5 planos de assinatura com limites (equipamentos, usuários, OS)
-- Troca de plano direta (sem Stripe) + via checkout Stripe
-- Webhook Stripe para sincronização de status
+Módulos da plataforma
 
-### Auditoria
-- Log de todas as ações críticas (criar, editar, excluir)
-- Filtro por usuário, ação e período
+Indicadores de manutenção
 
-### Login de Técnico
-- Login genérico por setor sem credenciais individuais
-- Sessão de turno — `endTechnicianSession` libera acesso para o próximo técnico
+Arquitetura
 
----
+Decisões de engenharia
 
-## Tech Stack
+Segurança e privacidade
 
-| Camada | Tecnologia |
-|---|---|
-| Backend | FastAPI, Python 3.11+ |
-| ORM | SQLAlchemy 2.0 (async-ready, sync usado) |
-| Banco | PostgreSQL (Supabase) |
-| Auth | JWT HS256 — 8h access + 7d refresh |
-| Hashing | bcrypt |
-| Billing | Stripe API + Webhooks |
-| Servidor | Uvicorn |
-| Validação | Pydantic v2 |
-| Frontend | React 19, React Router v7 |
-| HTTP Client | Axios (interceptor JWT + auto-refresh) |
-| UI | Shadcn UI + Tailwind CSS |
-| Gráficos | Recharts |
-| Toasts | Sonner |
-| Ícones | Lucide-react |
+Perfis e controle de acesso
 
----
+Tecnologias
 
-## Arquitetura
+Estrutura do projeto
 
-```
-┌─────────────────────────────────────────────┐
-│                  Frontend                    │
-│  React 19 + React Router v7 + Shadcn UI      │
-│  AuthContext · ThemeContext · Axios           │
-└──────────────────┬──────────────────────────┘
-                   │ REST API (JSON)
-┌──────────────────▼──────────────────────────┐
-│                  Backend                     │
-│  FastAPI · SQLAlchemy · Pydantic v2          │
-│  JWT Auth · RBAC Middleware                  │
-│  Stripe Webhook Handler                      │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│              PostgreSQL (Supabase)           │
-│  Multi-tenant via organization_id            │
-│  Sem Alembic — ALTER TABLE IF NOT EXISTS     │
-└─────────────────────────────────────────────┘
-```
+Instalação local
 
-**Multi-tenancy**: toda tabela possui `organization_id`. Todas as queries são filtradas pelo tenant do token JWT. O superusuário pode consultar qualquer organização.
+Variáveis de ambiente
 
-**Migrações**: sem Alembic. A função `ensure_database_schema()` executa `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` ao iniciar o servidor.
+Execução e build
 
----
+Testes
 
-## Planos e Limites
+API e observabilidade
 
-| Plano | Preço | Equipamentos | Usuários | OS/mês | Extras |
-|---|---|---|---|---|---|
-| Demo | Grátis (10 dias) | 5 | 3 | 10 | — |
-| Essencial | R$ 250/mês | 20 | 10 | 100 | — |
-| Profissional | R$ 490/mês | 35 | 45 | Ilimitado | Kanban, Preditivo |
-| Avançado | R$ 790/mês | 50 | 100 | Ilimitado | Kanban, Preditivo, Relatórios |
-| Enterprise | R$ 1.290/mês | Ilimitado | Ilimitado | Ilimitado | Todos |
+Deploy
 
----
+Roadmap
 
-## Roles e Permissões
+Competências demonstradas
 
-| Role | Descrição | Acesso |
-|---|---|---|
-| `superusuario` | Gestor da plataforma | Portal Plataforma (todas as orgs) |
-| `admin` | Administrador da organização | Tudo exceto Portal Plataforma |
-| `lider` | Líder técnico | OS, Kanban, Equipamentos, Dashboards, Relatórios, Usuários, Auditoria |
-| `tecnico` | Técnico de manutenção | OS, Kanban, Equipamentos, Planos Preventivos |
-| `operador` | Operador de produção | OS (leitura + ocorrência), Kanban |
+Autor
 
----
+Licença
 
-## Pré-requisitos
+Sobre o AURIX
 
-- Python 3.11+
-- Node.js 18+ e Yarn
-- PostgreSQL (ou conta Supabase)
-- Conta Stripe (para billing)
+O AURIX é uma plataforma SaaS de Planejamento e Controle de Manutenção (PCM) criada para centralizar a gestão de ativos, equipes e intervenções técnicas em operações industriais.
 
----
+A solução acompanha o processo de manutenção desde a identificação de uma falha até a validação do serviço realizado, registrando tempos, custos, materiais, evidências, responsáveis e histórico operacional.
 
-## Instalação
+Com arquitetura multiempresa, cada organização utiliza um ambiente logicamente isolado. A experiência e as permissões são adaptadas ao papel de cada usuário, permitindo que gestores, líderes, técnicos e operadores atuem sobre o mesmo processo com níveis de acesso distintos.
 
-```bash
-# 1. Clone o repositório
-git clone <repo-url>
+O projeto foi construído como uma aplicação Full Stack real, contemplando não apenas telas e cadastros, mas também regras de negócio, billing SaaS, segurança, auditoria, operação offline, eventos em tempo real, integrações e observabilidade.
+
+Visão do produto
+
+O AURIX busca transformar registros dispersos de manutenção em um fluxo operacional rastreável e orientado por dados.
+
+Desafio industrial
+
+Como o AURIX atua
+
+Falhas registradas de forma descentralizada
+
+Centraliza solicitações e ordens de serviço
+
+Dificuldade para priorizar atendimentos
+
+Organiza criticidade, prioridade, SLA e status
+
+Pouca visibilidade sobre máquinas paradas
+
+Registra downtime e calcula impacto operacional
+
+Histórico técnico incompleto
+
+Mantém ocorrências, evidências, custos e auditoria
+
+Manutenção preventiva dependente de controles manuais
+
+Estrutura planos e rotinas de geração de OS
+
+Decisões sem indicadores confiáveis
+
+Consolida MTTR, MTBF, disponibilidade, Pareto e custos
+
+Sistemas diferentes para cada unidade
+
+Isola organizações dentro de uma plataforma multi-tenant
+
+Crescimento sem modelo comercial escalável
+
+Aplica planos, limites, feature flags e billing integrado
+
+Indicadores do projeto
+
+Os números abaixo representam a estrutura analisada nesta versão do repositório e podem evoluir conforme o produto recebe novos módulos.
+
+<div align="center">
+
+API
+
+Interface
+
+Componentes
+
+Qualidade
+
+160+ endpoints
+
+20+ páginas
+
+50+ componentes React
+
+Cerca de 80 testes backend
+
+Rotas organizadas por domínio
+
+Fluxos por perfil de usuário
+
+Biblioteca reutilizável de UI
+
+Testes unitários, segurança e negócio
+
+</div>
+
+Outros destaques técnicos:
+
+Mais de 20 módulos de rotas no backend
+
+Separação entre routers, services, schemas, models e middlewares
+
+API versionada atualmente como 4.0.0
+
+Aplicação web instalável com recursos de PWA
+
+Suporte a API REST e eventos em tempo real via Server-Sent Events
+
+Deploy preparado para frontend e backend independentes
+
+Principais funcionalidades
+
+Ordens de Serviço
+
+Abertura de OS corretivas, preventivas e preditivas
+
+Classificação por prioridade, setor, equipamento, grupo e subgrupo
+
+Ciclo completo de atendimento, revisão e encerramento
+
+Registro incremental de ocorrências durante a intervenção
+
+Cálculo de tempo de resposta e tempo total de parada
+
+Controle de SLA conforme a prioridade
+
+Bloqueio de grupos de falha conflitantes no mesmo equipamento
+
+Associação de equipes e colaboradores
+
+Registro de custos, peças e evidências
+
+Histórico de mudanças de status
+
+Fluxo de revisão com atribuição de responsável
+
+Ativos e equipamentos
+
+Cadastro de máquinas, equipamentos e componentes
+
+Organização hierárquica de ativos
+
+Classificação de criticidade
+
+Agrupamento por setor, grupo e subgrupo
+
+Localização e dados operacionais
+
+Histórico de manutenções por equipamento
+
+Custo estimado de parada com base no valor/hora do ativo
+
+Planejamento preventivo
+
+Criação de planos preventivos
+
+Definição de frequência e responsáveis
+
+Vinculação com equipamentos
+
+Geração de ordens preventivas
+
+Processamento por rotinas agendadas
+
+Acompanhamento de execução e vencimento
+
+Monitoramento preditivo e IoT
+
+Cadastro de configurações de monitoramento
+
+Recebimento de telemetria autenticada por API key
+
+Registro de leituras de sensores
+
+Alertas classificados por severidade
+
+Conversão de eventos críticos em ações operacionais
+
+Visão consolidada de alertas por organização
+
+Kanban operacional
+
+Visualização das ordens por etapa
+
+Movimentação entre estados permitidos
+
+Priorização visual de atendimentos
+
+Acompanhamento de SLA e downtime
+
+Atualização de informações operacionais em tempo real
+
+Dashboards por perfil
+
+Dashboard estratégico para administração
+
+Dashboard de liderança de manutenção
+
+Dashboard operacional para técnicos e produção
+
+KPIs de disponibilidade, produtividade e confiabilidade
+
+Rankings de equipamentos e falhas
+
+Visões de custos e impacto de parada
+
+Acompanhamento do volume de OS por status e período
+
+Almoxarifado e estoque
+
+Cadastro de peças e fornecedores
+
+Organização por depósitos
+
+Controle de saldo por item e local
+
+Entradas, saídas, ajustes e transferências
+
+Consumo de material associado à ordem de serviço
+
+Alertas de estoque abaixo do ponto de reposição
+
+Rastreabilidade das movimentações
+
+Evidências e checklists
+
+Anexos vinculados às ordens de serviço
+
+Registro de imagens e documentos técnicos
+
+Templates de checklist
+
+Execução de checklists durante a manutenção
+
+Evidências para validação, auditoria e conformidade
+
+Relatórios
+
+Análise de Pareto por grupo de falha
+
+Indicadores de MTTR e MTBF
+
+Tempo de resposta e tempo de parada
+
+Relatórios de custo de manutenção
+
+Filtros por período, setor e equipamento
+
+Exportação de dados em PDF e Excel
+
+Auditoria e notificações
+
+Registro de ações críticas
+
+Rastreamento de alterações em campos relevantes
+
+Filtros por usuário, ação e período
+
+Notificações internas por evento
+
+Eventos em tempo real isolados por organização
+
+Integração opcional com canais externos de comunicação
+
+Gestão SaaS e billing
+
+Organizações independentes na mesma plataforma
+
+Planos com limites de equipamentos, usuários e ordens
+
+Feature flags por nível de assinatura
+
+Fluxo de upgrade dentro da aplicação
+
+Integração com Stripe Checkout
+
+Processamento de webhooks
+
+Histórico de transações
+
+Portal administrativo para gestão da plataforma
+
+Fluxo operacional
+
+Identificação da necessidade
+          │
+          ▼
+Abertura da solicitação / OS
+          │
+          ├── Equipamento e setor
+          ├── Tipo de manutenção
+          ├── Prioridade e criticidade
+          └── Grupo e subgrupo de falha
+          │
+          ▼
+Triagem e planejamento
+          │
+          ├── Definição de responsável
+          ├── Verificação de SLA
+          ├── Disponibilidade de materiais
+          └── Preparação da intervenção
+          │
+          ▼
+Execução técnica
+          │
+          ├── Início do atendimento
+          ├── Ocorrências e apontamentos
+          ├── Peças, custos e mão de obra
+          ├── Evidências e checklist
+          └── Controle do downtime
+          │
+          ▼
+Revisão e validação
+          │
+          ├── Conferência da execução
+          ├── Aprovação da liderança
+          └── Registro de auditoria
+          │
+          ▼
+Encerramento
+          │
+          ▼
+Histórico, indicadores e melhoria contínua
+
+Estados principais de uma OS
+
+ABERTA
+  │
+  ▼
+EM ATENDIMENTO
+  │
+  ├── AGUARDANDO PEÇA
+  │
+  ▼
+AGUARDANDO REVISÃO
+  │
+  ▼
+REVISADA
+  │
+  ▼
+FECHADA
+
+As transições respeitam regras de negócio, permissões, histórico e validações do processo.
+
+Módulos da plataforma
+
+Módulo
+
+Responsabilidade
+
+Autenticação
+
+Login, refresh token, recuperação de acesso e sessões
+
+MFA
+
+Autenticação multifator com TOTP e códigos de recuperação
+
+SSO
+
+Integração corporativa com provedores compatíveis com OIDC
+
+Organizações
+
+Isolamento multiempresa, configurações e plano contratado
+
+Usuários e RBAC
+
+Papéis, permissões e controle de acesso granular
+
+Colaboradores
+
+Gestão das pessoas envolvidas na operação
+
+Setores
+
+Organização dos ambientes e equipes industriais
+
+Equipamentos
+
+Cadastro, hierarquia, criticidade e histórico de ativos
+
+Ordens de Serviço
+
+Planejamento, execução, revisão e encerramento das intervenções
+
+Custos
+
+Materiais, substituições, mão de obra e custo de parada
+
+Preventiva
+
+Planos e rotinas de manutenção programada
+
+Preditiva
+
+Leituras, monitoramento e alertas por severidade
+
+IoT
+
+Entrada autenticada de telemetria de equipamentos
+
+Kanban
+
+Gestão visual do fluxo operacional
+
+Estoque
+
+Peças, depósitos, saldos e movimentações
+
+Fornecedores
+
+Apoio ao abastecimento e controle de materiais
+
+Evidências
+
+Anexos, checklists e comprovações técnicas
+
+Dashboards
+
+Indicadores adequados ao contexto de cada perfil
+
+Relatórios
+
+Análises de desempenho, falhas e custos
+
+Notificações
+
+Avisos internos e atualizações em tempo real
+
+Auditoria
+
+Histórico de ações administrativas e operacionais
+
+LGPD
+
+Consentimento, portabilidade e tratamento de solicitações
+
+Billing
+
+Assinaturas, planos, limites e integração de pagamentos
+
+Superusuário
+
+Administração global da plataforma SaaS
+
+Indicadores de manutenção
+
+O AURIX utiliza os dados operacionais para apoiar decisões de manutenção e confiabilidade.
+
+Indicador
+
+Aplicação
+
+MTTR
+
+Mede o tempo médio necessário para reparar um equipamento
+
+MTBF
+
+Indica o tempo médio de operação entre falhas
+
+Disponibilidade
+
+Avalia o percentual de tempo em que o ativo permanece disponível
+
+Tempo de resposta
+
+Mede o intervalo entre a abertura e o início do atendimento
+
+Downtime
+
+Consolida o período de indisponibilidade dos ativos
+
+Cumprimento de SLA
+
+Compara o atendimento com os limites definidos por prioridade
+
+Custo de parada
+
+Estima o impacto financeiro da indisponibilidade
+
+Custo de manutenção
+
+Agrupa peças, mão de obra e demais custos da intervenção
+
+Pareto de falhas
+
+Identifica os grupos responsáveis pela maior recorrência de problemas
+
+Backlog de OS
+
+Mostra a distribuição de serviços pendentes e em andamento
+
+SLA padrão por prioridade
+
+Prioridade
+
+Limite de referência
+
+Crítica
+
+30 minutos
+
+Alta
+
+60 minutos
+
+Média
+
+120 minutos
+
+Baixa
+
+480 minutos
+
+Os valores podem evoluir para configurações específicas de cada operação e contrato.
+
+Arquitetura
+
+┌─────────────────────────────────────────────────────────────┐
+│                         FRONTEND                            │
+│ React 19 · React Router 7 · Tailwind CSS · Radix UI        │
+│ Context API · Axios · Recharts · PWA · Offline Queue       │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                  REST API + Server-Sent Events
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                          BACKEND                            │
+│ FastAPI · Pydantic 2 · SQLAlchemy 2 · APScheduler          │
+│ JWT · MFA · OIDC · RBAC · Rate Limiting · Security Headers│
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                         POSTGRESQL                          │
+│        Isolamento lógico por organization_id               │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+            ┌────────────────┼───────────────────┐
+            ▼                ▼                   ▼
+          Stripe       Observabilidade      Serviços externos
+      Checkout/Webhook  Sentry/Prometheus   E-mail/Notificações
+
+Organização do backend
+
+Request
+  │
+  ▼
+Middleware
+  ├── Request ID
+  ├── Security Headers
+  ├── Rate Limiting
+  └── Tenant Isolation
+  │
+  ▼
+Router
+  │
+  ▼
+Service / Regra de negócio
+  │
+  ▼
+SQLAlchemy Model
+  │
+  ▼
+PostgreSQL
+
+Organização do frontend
+
+Rota protegida
+  │
+  ▼
+Layout e guarda de acesso
+  │
+  ▼
+Página do módulo
+  │
+  ├── Componentes compartilhados
+  ├── Contextos globais
+  ├── Cliente HTTP com interceptors
+  └── Eventos em tempo real / fila offline
+
+Decisões de engenharia
+
+Arquitetura multi-tenant
+
+Os dados operacionais são associados a uma organização. O tenant é extraído do contexto autenticado e aplicado às consultas, reduzindo o risco de acesso cruzado entre empresas.
+
+Organização A                     Organização B
+├── Usuários                      ├── Usuários
+├── Equipamentos                  ├── Equipamentos
+├── Ordens de Serviço             ├── Ordens de Serviço
+├── Estoque                       ├── Estoque
+└── Indicadores                   └── Indicadores
+
+             Mesma plataforma, dados isolados
+
+Separação por domínio
+
+O backend é organizado em módulos independentes, evitando concentrar toda a aplicação em um único arquivo. Rotas, contratos, entidades e regras de negócio possuem responsabilidades distintas.
+
+Controle de acesso em múltiplas camadas
+
+As permissões não dependem apenas da interface. O frontend controla a experiência do usuário, enquanto o backend valida a autorização sobre cada recurso protegido.
+
+Feature flags por assinatura
+
+Recursos como Kanban, análise preditiva, estoque, evidências, relatórios e integrações podem ser liberados conforme o plano da organização.
+
+Tempo real isolado por organização
+
+O sistema utiliza Server-Sent Events (SSE) para distribuir eventos operacionais. Cada conexão é vinculada ao tenant autenticado, evitando que atualizações de uma organização sejam entregues a outra.
+
+Operação offline
+
+O frontend possui service worker e fila local para melhorar a experiência em ambientes industriais com conectividade instável. Leituras podem utilizar cache controlado, e operações pendentes podem ser sincronizadas após o retorno da conexão.
+
+Processamento agendado
+
+Rotinas periódicas utilizam APScheduler para automatizar tarefas relacionadas a manutenção preventiva e processos internos.
+
+Observabilidade
+
+A aplicação disponibiliza health checks, request IDs, logs estruturados e integrações opcionais com Sentry e Prometheus.
+
+Segurança e privacidade
+
+A segurança foi tratada como parte da arquitetura da aplicação, não apenas como uma camada visual.
+
+Autenticação
+
+Access tokens e refresh tokens JWT
+
+Senhas protegidas com bcrypt
+
+Expiração e renovação de sessão
+
+Registro de tentativas de login
+
+Recuperação de acesso
+
+Sessões específicas para operação técnica
+
+Autenticação multifator
+
+MFA baseado em TOTP, compatível com aplicativos autenticadores
+
+Secret protegido com criptografia simétrica
+
+Códigos de recuperação
+
+Confirmação adicional para ativação e desativação
+
+SSO corporativo
+
+Integração com provedores OIDC
+
+Fluxo de autorização e callback
+
+Provisionamento de usuário conforme configuração da organização
+
+Recurso controlado por plano e configuração administrativa
+
+Proteções de API
+
+Rate limiting em endpoints sensíveis
+
+Security headers HTTP
+
+CORS configurável por ambiente
+
+Request ID para rastreabilidade
+
+Validação de payloads com Pydantic
+
+Autorização por perfil e permissão
+
+Isolamento de tenant no backend
+
+Inicialização fail-fast quando variáveis críticas estão ausentes em produção
+
+LGPD
+
+O projeto contempla recursos associados aos direitos do titular, incluindo:
+
+Registro e atualização de consentimentos
+
+Exportação de dados pessoais
+
+Solicitações de privacidade
+
+Anonimização mediante fluxo administrativo
+
+Redução de dados pessoais enviados à observabilidade
+
+Credenciais, tokens, dados de clientes, chaves privadas, arquivos .env e informações comerciais sensíveis não devem ser publicados no repositório.
+
+Perfis e controle de acesso
+
+A plataforma possui RBAC com perfis gerais e especializações para manutenção e produção.
+
+Perfil
+
+Escopo principal
+
+Superusuário
+
+Administração global da plataforma e das organizações
+
+Administrador
+
+Usuários, configurações, assinatura e operação da organização
+
+Gerente industrial
+
+Visão estratégica da operação e indicadores globais
+
+Supervisor de manutenção
+
+Gestão do backlog, prioridades, equipes e desempenho
+
+Liderança de manutenção
+
+Coordenação técnica por área ou especialidade
+
+Analista de manutenção
+
+Planejamento, indicadores e análise de confiabilidade
+
+Engenheiro de manutenção
+
+Análise técnica e apoio à estratégia dos ativos
+
+Técnico
+
+Execução de OS, ocorrências, evidências e apontamentos
+
+Liderança de produção
+
+Acompanhamento dos ativos e impacto sobre a produção
+
+Operador
+
+Abertura de ocorrências e acompanhamento do setor
+
+As permissões são organizadas por recurso e ação, permitindo controles como visualizar, criar, atualizar, aprovar, baixar estoque ou gerenciar usuários.
+
+Tecnologias
+
+Frontend
+
+Tecnologia
+
+Aplicação
+
+React 19
+
+Construção da interface e dos módulos operacionais
+
+React Router 7
+
+Navegação, rotas protegidas e layouts aninhados
+
+Tailwind CSS 3
+
+Estilização e design responsivo
+
+Radix UI / shadcn/ui
+
+Componentes acessíveis e reutilizáveis
+
+Axios
+
+Comunicação com a API e renovação de token
+
+React Hook Form + Zod
+
+Formulários e validação
+
+Recharts
+
+Dashboards e indicadores visuais
+
+Sonner
+
+Feedback e notificações de interface
+
+Lucide React
+
+Ícones da aplicação
+
+Service Worker
+
+Instalação PWA, cache e suporte offline
+
+Backend
+
+Tecnologia
+
+Aplicação
+
+Python 3.11+
+
+Linguagem principal do backend
+
+FastAPI 0.110
+
+API REST e documentação OpenAPI
+
+Uvicorn
+
+Servidor ASGI
+
+Pydantic 2
+
+Contratos, validação e configurações
+
+SQLAlchemy 2
+
+Mapeamento e persistência de dados
+
+PostgreSQL
+
+Banco relacional principal
+
+APScheduler
+
+Tarefas e rotinas agendadas
+
+ReportLab
+
+Geração de documentos PDF
+
+OpenPyXL
+
+Exportação de planilhas Excel
+
+Segurança, SaaS e observabilidade
+
+Tecnologia
+
+Aplicação
+
+JWT / PyJWT
+
+Access e refresh tokens
+
+bcrypt
+
+Hash de senhas
+
+PyOTP
+
+MFA baseado em TOTP
+
+Authlib
+
+Fluxos SSO/OIDC
+
+SlowAPI
+
+Rate limiting
+
+Stripe
+
+Checkout, assinaturas e webhooks
+
+Sentry
+
+Monitoramento de erros opcional
+
+Prometheus Instrumentator
+
+Métricas técnicas da API
+
+Estrutura do projeto
+
+Saas-PCM/
+├── backend/
+│   ├── server.py                    # Bootstrap da API e registro dos módulos
+│   ├── requirements.txt             # Dependências Python
+│   ├── tests/                       # Testes unitários e de segurança
+│   └── app/
+│       ├── config.py                # Planos, limites, enums e SLA
+│       ├── database.py              # Engine e sessões SQLAlchemy
+│       ├── deps.py                  # Dependências de autenticação e tenant
+│       ├── settings.py              # Configuração centralizada por ambiente
+│       ├── middleware/
+│       │   ├── logging_config.py
+│       │   ├── rate_limiter.py
+│       │   ├── request_id.py
+│       │   ├── security_headers.py
+│       │   └── tenant.py
+│       ├── models/
+│       │   ├── core.py              # Entidades centrais do PCM
+│       │   ├── estoque.py           # Entidades de almoxarifado
+│       │   └── evidencias.py        # Anexos e checklists
+│       ├── routers/                 # Endpoints separados por domínio
+│       ├── schemas/                 # Schemas Pydantic
+│       └── services/
+│           ├── auth_service.py
+│           ├── estoque_service.py
+│           ├── mfa_service.py
+│           ├── preditivo_service.py
+│           ├── rbac_service.py
+│           ├── realtime.py
+│           ├── report_service.py
+│           ├── scheduler.py
+│           ├── sso_service.py
+│           ├── storage_service.py
+│           ├── tenant_service.py
+│           └── whatsapp_service.py
+│
+├── frontend/
+│   ├── public/
+│   │   ├── manifest.json            # Metadados PWA
+│   │   ├── service-worker.js        # Cache e experiência offline
+│   │   └── icons/
+│   ├── src/
+│   │   ├── App.js                   # Rotas públicas e protegidas
+│   │   ├── components/
+│   │   │   ├── AppLayout.jsx
+│   │   │   ├── shared/              # Componentes de negócio reutilizáveis
+│   │   │   └── ui/                  # Biblioteca visual
+│   │   ├── contexts/
+│   │   │   ├── AuthContext.js
+│   │   │   ├── RealtimeContext.jsx
+│   │   │   └── ThemeContext.js
+│   │   ├── hooks/
+│   │   ├── lib/
+│   │   │   ├── api.js               # Cliente HTTP e integrações da API
+│   │   │   ├── offlineQueue.js      # Fila de operações offline
+│   │   │   └── serviceWorkerRegistration.js
+│   │   └── pages/                   # Páginas dos módulos da plataforma
+│   ├── package.json
+│   ├── tailwind.config.js
+│   └── vercel.json
+│
+├── scripts/                         # Utilitários do projeto
+├── test_reports/                    # Histórico de ciclos de teste
+├── backend_test.py                  # Suite de integração da API
+├── render.yaml                      # Deploy do backend
+├── design_guidelines.json           # Diretrizes do design system
+└── README.md
+
+Instalação local
+
+Pré-requisitos
+
+Python 3.11 ou superior
+
+Node.js 18 ou superior
+
+Yarn 1.22 ou npm compatível
+
+PostgreSQL local ou hospedado
+
+Git
+
+Integrações como Stripe, Sentry, SMTP, MFA e SSO são opcionais em desenvolvimento e dependem da configuração de cada ambiente.
+
+1. Clonar o projeto
+
+git clone <URL_DO_REPOSITORIO>
 cd Saas-PCM
 
-# 2. Backend
+2. Criar o ambiente do backend
+
 cd backend
-python -m venv venv
-# Windows:
-venv\Scripts\activate
-# Linux/Mac:
-source venv/bin/activate
+python -m venv .venv
+
+No Windows:
+
+.venv\Scripts\activate
+
+No Linux ou macOS:
+
+source .venv/bin/activate
+
+Instale as dependências:
 
 pip install -r requirements.txt
 
-# 3. Frontend
-cd ../frontend
-yarn install
-```
+3. Instalar o frontend
 
----
+Em outro terminal:
 
-## Variáveis de Ambiente
-
-### Backend — `backend/.env`
-
-```env
-DATABASE_URL=postgresql://user:password@host:5432/dbname
-JWT_SECRET=seu_segredo_jwt_aqui
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-CORS_ORIGINS=http://localhost:3000
-```
-
-### Frontend — `frontend/.env`
-
-```env
-REACT_APP_BACKEND_URL=http://localhost:8001
-```
-
----
-
-## Rodando o Projeto
-
-### Backend
-
-```bash
-cd backend
-uvicorn app.main:app --reload --port 8001
-```
-
-A API ficará disponível em `http://localhost:8001`. Documentação automática em `http://localhost:8001/docs`.
-
-### Frontend
-
-```bash
 cd frontend
+yarn install
+
+Também é possível utilizar:
+
+npm install
+
+Variáveis de ambiente
+
+Backend — backend/.env
+
+Use valores próprios e seguros. Nunca publique o arquivo real no Git.
+
+# Ambiente
+ENV=development
+
+# Banco de dados
+DATABASE_URL=postgresql://usuario:senha@localhost:5432/aurix
+
+# Autenticação
+JWT_SECRET=<CHAVE_ALEATORIA_COM_PELO_MENOS_32_CARACTERES>
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# Frontend e CORS
+FRONTEND_URL=http://localhost:3000
+CORS_EXTRA_ORIGINS=
+
+# MFA — opcional
+MFA_ENCRYPTION_KEY=<CHAVE_FERNET>
+
+# Stripe — opcional
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+
+# E-mail — opcional
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM=noreply@example.com
+
+# Observabilidade — opcional
+SENTRY_DSN=
+SENTRY_TRACES_SAMPLE_RATE=0.1
+
+Gere um segredo JWT seguro:
+
+python -c "import secrets; print(secrets.token_hex(32))"
+
+Gere uma chave para criptografia do MFA:
+
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+Frontend — frontend/.env
+
+REACT_APP_BACKEND_URL=http://localhost:8001
+
+Execução e build
+
+Backend em desenvolvimento
+
+Execute a partir da pasta backend:
+
+uvicorn server:app --reload --host 0.0.0.0 --port 8001
+
+Serviços disponíveis:
+
+Serviço
+
+Endereço local
+
+API
+
+http://localhost:8001
+
+Swagger UI
+
+http://localhost:8001/docs
+
+Health check
+
+http://localhost:8001/health
+
+Readiness check
+
+http://localhost:8001/ready
+
+A documentação Swagger é desabilitada automaticamente em ambiente de produção.
+
+Frontend em desenvolvimento
+
+Execute a partir da pasta frontend:
+
 yarn start
-```
 
-O app ficará disponível em `http://localhost:3000`.
+A interface será iniciada, por padrão, em:
 
-### Seed de demonstração
+http://localhost:3000
 
-```bash
-# Com o backend rodando:
-curl -X POST http://localhost:8001/api/seed-demo
-```
+Build de produção do frontend
 
-Cria uma organização demo com usuários, equipamentos e OS de exemplo.
+yarn build
 
----
+Execução do backend em produção
 
-## Estrutura de Pastas
+uvicorn server:app --host 0.0.0.0 --port $PORT
 
-```
-Saas-PCM/
-├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI app, startup, CORS
-│   │   ├── config.py            # Planos, limites, SLA
-│   │   ├── database.py          # Engine SQLAlchemy
-│   │   ├── models.py            # Todos os modelos ORM
-│   │   ├── schemas.py           # Pydantic schemas
-│   │   ├── auth.py              # JWT, bcrypt, deps
-│   │   ├── migrations.py        # ensure_database_schema()
-│   │   └── routers/
-│   │       ├── auth.py
-│   │       ├── equipamentos.py
-│   │       ├── ordens_servico.py
-│   │       ├── planos_preventivos.py
-│   │       ├── preditivo.py
-│   │       ├── relatorios.py
-│   │       ├── usuarios.py
-│   │       ├── billing.py
-│   │       ├── auditoria.py
-│   │       ├── setores.py
-│   │       ├── dashboard.py
-│   │       └── superusuario.py
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── App.js               # Rotas e guards
-│   │   ├── contexts/
-│   │   │   ├── AuthContext.jsx
-│   │   │   └── ThemeContext.jsx
-│   │   ├── lib/
-│   │   │   └── api.js           # Axios + todas as chamadas de API
-│   │   ├── pages/
-│   │   │   ├── LoginPage.jsx
-│   │   │   ├── TecnicoLoginPage.jsx
-│   │   │   ├── DashboardPage.jsx
-│   │   │   ├── DashboardLiderPage.jsx
-│   │   │   ├── DashboardOperadorPage.jsx
-│   │   │   ├── EquipamentosPage.jsx
-│   │   │   ├── OrdensServicoPage.jsx
-│   │   │   ├── KanbanPage.jsx
-│   │   │   ├── PlanosPreventivosPage.jsx
-│   │   │   ├── PreditivoPage.jsx
-│   │   │   ├── RelatoriosPage.jsx
-│   │   │   ├── UsuariosPage.jsx
-│   │   │   ├── AuditoriaPage.jsx
-│   │   │   ├── BillingPage.jsx
-│   │   │   ├── SettingsPage.jsx
-│   │   │   └── SuperuserPage.jsx
-│   │   └── components/
-│   │       ├── AppLayout.jsx
-│   │       ├── ui/              # Shadcn UI components
-│   │       └── shared/
-│   │           └── NotificacoesDropdown.jsx
-│   └── package.json
-├── backend_test.py              # Suite de testes automatizados
-├── test_result.md               # Status e resultado dos testes
-├── design_guidelines.json       # Design system da plataforma
-└── README.md
-```
+Testes
 
----
+O backend possui testes voltados a autenticação, billing, isolamento multi-tenant, estoque, uploads, headers de segurança e regras do PCM.
 
-## Rotas do Frontend
+Executar todos os testes unitários
 
-| Rota | Componente | Roles |
-|---|---|---|
-| `/login` | LoginPage | Público |
-| `/login/tecnico` | TecnicoLoginPage | Público |
-| `/dashboard` | DashboardPage | admin |
-| `/dashboard/lider` | DashboardLiderPage | lider |
-| `/dashboard/operador` | DashboardOperadorPage | tecnico, operador |
-| `/equipamentos` | EquipamentosPage | admin, lider, tecnico |
-| `/ordens-servico` | OrdensServicoPage | admin, lider, tecnico, operador |
-| `/kanban` | KanbanPage | admin, lider, tecnico, operador |
-| `/planos-preventivos` | PlanosPreventivosPage | admin, lider, tecnico |
-| `/preditivo` | PreditivoPage | admin, lider |
-| `/relatorios` | RelatoriosPage | admin, lider |
-| `/usuarios` | UsuariosPage | admin, lider |
-| `/auditoria` | AuditoriaPage | admin, lider |
-| `/billing` | BillingPage | admin |
-| `/settings` | SettingsPage | admin |
-| `/superuser` | SuperuserPage | superusuario |
+A partir da raiz do projeto:
 
----
+pytest backend/tests -v
 
-## API Endpoints
+Executar arquivos específicos
 
-### Auth
-| Método | Rota | Descrição |
-|---|---|---|
-| POST | `/api/auth/login` | Login com e-mail e senha |
-| POST | `/api/auth/refresh` | Renovar access token |
-| POST | `/api/auth/logout` | Revogar refresh token |
-| POST | `/api/auth/login/tecnico` | Login genérico de técnico por setor |
-| POST | `/api/auth/tecnico/end-session` | Finalizar turno do técnico |
+pytest backend/tests/test_auth_unit.py -v
+pytest backend/tests/test_billing_unit.py -v
+pytest backend/tests/test_estoque_unit.py -v
+pytest backend/tests/test_security.py -v
+pytest backend/tests/test_tenant_unit.py -v
 
-### Setores
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/setores` | Listar setores da organização |
-| POST | `/api/setores` | Criar setor |
+Suite de integração da API
 
-### Equipamentos
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/equipamentos` | Listar (filtros: setor, busca) |
-| POST | `/api/equipamentos` | Criar |
-| PUT | `/api/equipamentos/{id}` | Editar |
-| DELETE | `/api/equipamentos/{id}` | Excluir |
+Com o backend em execução:
 
-### Ordens de Serviço
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/ordens-servico` | Listar (filtros: status, prioridade, tipo, setor) |
-| POST | `/api/ordens-servico` | Criar — 409 se failure_group duplicado |
-| PUT | `/api/ordens-servico/{id}` | Editar |
-| PATCH | `/api/ordens-servico/{id}/status` | Mudar status (calcula response_time_min) |
-| PATCH | `/api/ordens-servico/{id}/ocorrencia` | Adicionar ocorrência (downtime_start imutável) |
-| DELETE | `/api/ordens-servico/{id}` | Excluir |
-
-### Dashboard
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/dashboard` | KPIs admin |
-| GET | `/api/dashboard/lider` | KPIs + financeiro (lider) |
-| GET | `/api/dashboard/operador` | KPIs do turno (tecnico/operador) |
-
-### Planos Preventivos
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/planos-preventivos` | Listar planos |
-| POST | `/api/planos-preventivos` | Criar plano |
-| PUT | `/api/planos-preventivos/{id}` | Editar |
-| DELETE | `/api/planos-preventivos/{id}` | Excluir |
-| POST | `/api/planos-preventivos/{id}/executar` | Gerar OS preventiva |
-
-### Análise Preditiva
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/preditivo/alertas` | Listar alertas (filtro: severidade) |
-| POST | `/api/preditivo/alertas` | Criar alerta |
-| PATCH | `/api/preditivo/alertas/{id}` | Atualizar alerta |
-
-### Relatórios
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/relatorios` | Relatório Pareto de falhas |
-
-### Usuários
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/usuarios` | Listar usuários da organização |
-| POST | `/api/usuarios` | Criar usuário |
-| PUT | `/api/usuarios/{id}` | Editar |
-| DELETE | `/api/usuarios/{id}` | Excluir |
-
-### Billing
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/billing/plans` | Listar planos disponíveis |
-| POST | `/api/billing/checkout` | Criar sessão Stripe Checkout |
-| POST | `/api/billing/change-plan` | Trocar plano diretamente |
-| POST | `/api/billing/webhook` | Webhook Stripe |
-
-### Superusuário
-| Método | Rota | Descrição |
-|---|---|---|
-| GET | `/api/superuser/organizations` | Listar todas as organizações |
-| GET | `/api/superuser/stats` | Estatísticas globais da plataforma |
-| POST | `/api/superuser/organizations` | Criar organização |
-| PATCH | `/api/superuser/organizations/{id}` | Editar organização/plano |
-
----
-
-## Testes
-
-O arquivo `backend_test.py` contém uma suite de testes automatizados contra a API:
-
-```bash
-# Com o backend rodando em localhost:8001:
 python backend_test.py
 
-# URL customizada:
-AURIX_API_URL=https://api.meudominio.com/api python backend_test.py
-```
+Para utilizar outro endereço de API:
 
-Resultado salvo em `backend_test_results.json`. Status detalhado em `test_result.md`.
+AURIX_API_URL=http://localhost:8001/api python backend_test.py
 
-| # | Cenário | Endpoint |
-|---|---|---|
-| 1 | Login admin | POST /auth/login |
-| 2 | Criar equipamento | POST /equipamentos |
-| 3 | Criar OS corretiva | POST /ordens-servico |
-| 4 | Mudar status da OS | PATCH /ordens-servico/{id}/status |
-| 5 | Criar plano preventivo | POST /planos-preventivos |
-| 6 | Criar alerta preditivo | POST /preditivo/alertas |
-| 7 | Dashboard admin | GET /dashboard |
-| 8 | Criar usuário técnico | POST /usuarios |
-| 9 | RBAC — técnico sem acesso admin | GET /usuarios (403) |
-| 10 | Limite de equipamentos | POST /equipamentos (402) |
-| 11 | OS com failure_group | POST /ordens-servico |
-| 12 | Bloqueio grupo de falha (409) | POST /ordens-servico |
-| 13 | OS grupo diferente (mesmo equip.) | POST /ordens-servico |
-| 14 | Login genérico técnico | POST /auth/login/tecnico |
-| 15 | Adicionar ocorrência | PATCH /ordens-servico/{id}/ocorrencia |
-| 16 | response_time_min calculado | PATCH /ordens-servico/{id}/status |
-| 17 | Dashboard operador | GET /dashboard/operador |
-| 18 | Dashboard lider | GET /dashboard/lider |
+A quantidade de testes não representa, por si só, cobertura integral. O roadmap prevê ampliar a cobertura automatizada do frontend, dos fluxos end-to-end e das integrações externas.
 
----
+API e observabilidade
 
-## Design System
+Documentação da API
 
-Arquétipo **Swiss / High-Contrast** — foco em legibilidade e densidade de informação.
+Em desenvolvimento, o FastAPI disponibiliza uma interface OpenAPI interativa:
 
-### Tipografia
-- **Headings**: Outfit (font-heading)
-- **Body**: Inter (font-sans)
+http://localhost:8001/docs
 
-### Paleta (modo escuro padrão)
-| Token | Uso |
-|---|---|
-| `--primary` | Azul principal (#3B82F6) |
-| `--background` | Fundo da página |
-| `--card` | Superfícies de card |
-| `--muted-foreground` | Texto secundário |
-| `--border` | Bordas |
+O README apresenta a visão de produto e arquitetura. A documentação detalhada de endpoints deve permanecer no Swagger/OpenAPI ou em arquivos específicos dentro de docs/, evitando transformar a página principal do repositório em uma lista extensa de rotas.
 
-### Grupos de Falha — Cores
-| Grupo | Cor |
-|---|---|
-| Elétrico | Azul (#3B82F6) |
-| Hidráulico | Âmbar (#F59E0B) |
-| Mecânico | Cinza (#6B7280) |
-| Pneumático | Teal (#0D9488) |
-| Instrumentação | Violeta (#8B5CF6) |
-| Estrutural | Laranja (#FB923C) |
-| Outro | Neutro |
+Health checks
 
-### SLA por Prioridade
-| Prioridade | Limite |
-|---|---|
-| Crítica | 30 min |
-| Alta | 60 min |
-| Média | 120 min |
-| Baixa | 480 min |
+Endpoint
 
-### Regras
-- Sem glassmorphism
-- Bordas 1px com `border-border/50`
-- `rounded-sm` / `rounded-lg` — sem `rounded-full` em cards
-- Todos os inputs/botões novos com `data-testid`
-- Suporte a dark mode via variáveis Tailwind CSS
-- Textos em PT-BR
+Finalidade
 
----
+GET /health
 
-## Licença
+Verifica se o processo da aplicação está ativo
 
-Proprietário — AURIX © 2026. Todos os direitos reservados.
+GET /ready
+
+Verifica se a aplicação consegue acessar o banco de dados
+
+Telemetria operacional
+
+Request ID em todas as requisições
+
+Logs configurados conforme o ambiente
+
+Integração opcional com Sentry
+
+Instrumentação preparada para Prometheus
+
+Auditoria funcional separada dos logs técnicos
+
+Deploy
+
+A estrutura atual permite a publicação separada das duas camadas:
+
+Camada
+
+Estratégia presente no projeto
+
+Frontend
+
+Build React e configuração SPA compatível com Vercel
+
+Backend
+
+Serviço Python configurado para execução com Uvicorn
+
+Banco
+
+PostgreSQL local ou gerenciado, incluindo Supabase
+
+O arquivo render.yaml contém uma configuração declarativa para o backend. O diretório frontend possui regras de rewrite para navegação SPA.
+
+Em produção:
+
+Configure todas as variáveis críticas no provedor de hospedagem
+
+Utilize uma chave JWT exclusiva e forte
+
+Não salve segredos no repositório
+
+Restrinja as origens de CORS
+
+Configure o webhook do Stripe com assinatura válida
+
+Utilize HTTPS em todas as integrações
+
+Configure backup e monitoramento do PostgreSQL
+
+Habilite observabilidade e alertas operacionais
+
+Roadmap
+
+Engenharia e entrega
+
+Pipeline CI/CD com lint, testes e build automatizado
+
+Containerização completa com Docker e Docker Compose
+
+Versionamento formal de migrations com Alembic
+
+Cobertura automatizada do frontend
+
+Testes end-to-end dos fluxos críticos
+
+Análise estática e verificação de dependências no pipeline
+
+Escalabilidade e observabilidade
+
+Event bus distribuído para escalar eventos em tempo real horizontalmente
+
+Dashboards de métricas Prometheus e alertas operacionais
+
+Centralização de logs
+
+Políticas automatizadas de backup e recuperação
+
+Cache distribuído para consultas de alta frequência
+
+Produto
+
+Aplicativo ou experiência mobile especializada para técnicos
+
+Leitura de QR Code para identificação de ativos
+
+Scheduler configurável por organização
+
+Relatórios personalizados por unidade e setor
+
+Assinatura e validação digital de evidências
+
+Evolução da análise preditiva com modelos baseados em histórico
+
+Integrações industriais adicionais via API e webhooks
+
+Competências demonstradas
+
+O AURIX reúne desafios típicos de um produto empresarial e demonstra experiência prática em:
+
+Desenvolvimento Full Stack com React e Python
+
+Arquitetura modular de aplicações
+
+Modelagem relacional com SQLAlchemy e PostgreSQL
+
+Desenvolvimento e organização de APIs REST
+
+Autenticação, autorização, RBAC, MFA e SSO
+
+Arquitetura SaaS multi-tenant
+
+Billing, feature flags e limites por assinatura
+
+Processos industriais e regras de PCM
+
+Dashboards e visualização de indicadores
+
+Comunicação em tempo real com SSE
+
+Aplicações PWA e estratégias offline
+
+Geração de relatórios PDF e Excel
+
+Integrações de pagamento e serviços externos
+
+Segurança de APIs e proteção de dados
+
+Auditoria, observabilidade e rastreabilidade
+
+Testes automatizados e validação de regras de negócio
+
+Deploy desacoplado de frontend e backend
+
+Autor
+
+<div align="center">
+
+Marlos Gomes
+
+Desenvolvedor Full Stack
+
+Aplicações empresariais · APIs · Automação de processos · Cloud · UI/UX
+
+
+
+</div>
+
+Licença e confidencialidade
+
+Este software possui licença proprietária.
+
+AURIX © 2026. Todos os direitos reservados.
+
+O código-fonte, a marca, os fluxos operacionais, os componentes visuais e a documentação não podem ser copiados, redistribuídos, sublicenciados ou utilizados comercialmente sem autorização expressa do responsável pelo projeto.
+
+Dados reais de clientes, credenciais, segredos, chaves de API e demais informações sensíveis não fazem parte da documentação pública e devem permanecer protegidos por variáveis de ambiente e controles apropriados.
+
+<div align="center">
+
+AURIX
+
+Manutenção inteligente. Operação confiável. Decisões orientadas por dados.
+
+Desenvolvido por Marlos Gomes.
+
+</div>
