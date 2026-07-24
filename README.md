@@ -1,68 +1,143 @@
+<a id="topo"></a>
+
 <div align="center">
+<svg width="1600" height="520" viewBox="0 0 1600 520" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#071426"/>
+      <stop offset="0.52" stop-color="#0B2447"/>
+      <stop offset="1" stop-color="#123B68"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="480" y1="100" x2="1180" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#60A5FA" stroke-opacity="0.08" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="520" rx="28" fill="url(#bg)"/>
+  <rect width="1600" height="520" rx="28" fill="url(#grid)"/>
+
+  <circle cx="1430" cy="82" r="210" fill="#2563EB" fill-opacity="0.08"/>
+  <circle cx="120" cy="474" r="260" fill="#22D3EE" fill-opacity="0.05"/>
+
+  <g opacity="0.22" stroke="#7DD3FC" stroke-width="2">
+    <path d="M90 400H420L510 310H720"/>
+    <path d="M1120 118H1370L1450 198H1540"/>
+    <path d="M1050 430H1320L1400 350H1545"/>
+  </g>
+
+  <g transform="translate(164 116)">
+    <circle cx="104" cy="144" r="92" stroke="url(#accent)" stroke-width="14" opacity="0.9"/>
+    <circle cx="104" cy="144" r="38" fill="url(#accent)" opacity="0.92"/>
+    <g stroke="#93C5FD" stroke-width="18" stroke-linecap="round">
+      <path d="M104 24V54"/>
+      <path d="M104 234V264"/>
+      <path d="M-16 144H14"/>
+      <path d="M194 144H224"/>
+      <path d="M19 59L40 80"/>
+      <path d="M168 208L189 229"/>
+      <path d="M19 229L40 208"/>
+      <path d="M168 80L189 59"/>
+    </g>
+  </g>
+
+  <text x="510" y="218" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="116" font-weight="800" letter-spacing="16">AURIX</text>
+  <rect x="514" y="247" width="570" height="6" rx="3" fill="url(#accent)" filter="url(#glow)"/>
+  <text x="514" y="315" fill="#BAE6FD" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="600" letter-spacing="2">
+    GESTÃO DE MANUTENÇÃO INDUSTRIAL
+  </text>
+  <text x="514" y="374" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="25">
+    Ativos • Ordens de Serviço • Confiabilidade • Analytics
+  </text>
+
+  <g transform="translate(1260 315)">
+    <rect x="0" y="0" width="210" height="78" rx="18" fill="#0F172A" fill-opacity="0.66" stroke="#60A5FA" stroke-opacity="0.42"/>
+    <circle cx="38" cy="39" r="10" fill="#22C55E"/>
+    <text x="62" y="32" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700">OPERAÇÃO</text>
+    <text x="62" y="54" fill="#86EFAC" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">CONECTADA</text>
+  </g>
+</svg>
+<img src="docs/aurix-banner.svg" width="100%" alt="AURIX — Plataforma SaaS para Gestão de Manutenção Industrial"/>
+
+<br>
 
 AURIX
 
 Plataforma SaaS para Gestão de Manutenção Industrial
 
-Ativos, equipes, ordens de serviço e indicadores de manutenção reunidos em um único ambiente operacional.
+Ativos, equipes, ordens de serviço e indicadores reunidos em um único ambiente operacional.
 
-
+<p>
+  <img alt="Versão" src="https://img.shields.io/badge/versão-4.0.0-2563EB?style=flat-square">
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.110-009688?style=flat-square&logo=fastapi&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Supabase-4169E1?style=flat-square&logo=postgresql&logoColor=white">
+  <img alt="Stripe" src="https://img.shields.io/badge/Stripe-Billing-635BFF?style=flat-square&logo=stripe&logoColor=white">
+  <img alt="Licença" src="https://img.shields.io/badge/licença-proprietária-111827?style=flat-square">
+</p>
 
 Tecnologia aplicada à confiabilidade, disponibilidade e eficiência da manutenção industrial.
 
+<br>
+
+Visão Geral •Funcionalidades •Arquitetura •Tecnologias •Instalação •Roadmap
+
 </div>
 
-Sumário
+⚡ Visão rápida
 
-Sobre o AURIX
+<div align="center">
 
-Visão do produto
+🏭 PCM completo
 
-Indicadores do projeto
+🏢 Multiempresa
 
-Principais funcionalidades
+🔐 Segurança
 
-Fluxo operacional
+📡 Tempo real
 
-Módulos da plataforma
+Gestão de ativos e OS
 
-Indicadores de manutenção
+Isolamento por organização
 
-Arquitetura
+JWT, MFA, SSO e RBAC
 
-Decisões de engenharia
+SSE, PWA e fila offline
 
-Segurança e privacidade
+📊 Analytics
 
-Perfis e controle de acesso
+📦 Estoque
 
-Tecnologias
+💳 SaaS Billing
 
-Estrutura do projeto
+🔎 Rastreabilidade
 
-Instalação local
+MTTR, MTBF e Pareto
 
-Variáveis de ambiente
+Peças, depósitos e consumo
 
-Execução e build
+Planos, limites e Stripe
 
-Testes
+Auditoria, evidências e histórico
 
-API e observabilidade
+</div>
 
-Deploy
+<a id="visao-geral"></a>
 
-Roadmap
+📖 Visão Geral
 
-Competências demonstradas
-
-Autor
-
-Licença
-
-Sobre o AURIX
-
-O AURIX é uma plataforma SaaS de Planejamento e Controle de Manutenção (PCM) criada para centralizar a gestão de ativos, equipes e intervenções técnicas em operações industriais.
+O AURIX é uma plataforma SaaS de Planejamento e Controle de Manutenção (PCM) desenvolvida para conectar ativos, equipes, processos e indicadores em uma única operação digital.
 
 A solução acompanha o processo de manutenção desde a identificação de uma falha até a validação do serviço realizado, registrando tempos, custos, materiais, evidências, responsáveis e histórico operacional.
 
@@ -70,7 +145,9 @@ Com arquitetura multiempresa, cada organização utiliza um ambiente logicamente
 
 O projeto foi construído como uma aplicação Full Stack real, contemplando não apenas telas e cadastros, mas também regras de negócio, billing SaaS, segurança, auditoria, operação offline, eventos em tempo real, integrações e observabilidade.
 
-Visão do produto
+O objetivo do produto é reduzir controles dispersos, aumentar a rastreabilidade das intervenções e transformar dados de manutenção em decisões operacionais confiáveis.
+
+🎯 Visão do Produto
 
 O AURIX busca transformar registros dispersos de manutenção em um fluxo operacional rastreável e orientado por dados.
 
@@ -110,19 +187,33 @@ Crescimento sem modelo comercial escalável
 
 Aplica planos, limites, feature flags e billing integrado
 
-Indicadores do projeto
+💎 Diferenciais do Produto
+
+PCM de ponta a ponta: abertura, priorização, execução, revisão e encerramento das ordens de serviço.
+
+Visão orientada por perfil: dashboards e permissões específicas para administração, liderança, técnicos e operação.
+
+Confiabilidade operacional: acompanhamento de MTTR, MTBF, disponibilidade, SLA, downtime e Pareto de falhas.
+
+Arquitetura SaaS: organizações isoladas, planos, limites, feature flags, billing e gestão global da plataforma.
+
+Segurança empresarial: autenticação JWT, MFA, SSO/OIDC, RBAC, rate limiting, headers de segurança e auditoria.
+
+Experiência industrial: PWA, fila offline, notificações e atualização em tempo real para ambientes com conectividade variável.
+
+📊 Projeto em Números
 
 Os números abaixo representam a estrutura analisada nesta versão do repositório e podem evoluir conforme o produto recebe novos módulos.
 
 <div align="center">
 
-API
+🔌 API
 
-Interface
+🖥️ Interface
 
-Componentes
+🧱 Componentes
 
-Qualidade
+🧪 Qualidade
 
 160+ endpoints
 
@@ -130,15 +221,15 @@ Qualidade
 
 50+ componentes React
 
-Cerca de 80 testes backend
+~80 testes backend
 
-Rotas organizadas por domínio
+Rotas por domínio
 
-Fluxos por perfil de usuário
+Fluxos por perfil
 
-Biblioteca reutilizável de UI
+Biblioteca reutilizável
 
-Testes unitários, segurança e negócio
+Segurança e regras de negócio
 
 </div>
 
@@ -156,9 +247,54 @@ Suporte a API REST e eventos em tempo real via Server-Sent Events
 
 Deploy preparado para frontend e backend independentes
 
-Principais funcionalidades
+<a id="funcionalidades"></a>
 
-Ordens de Serviço
+✨ Principais Funcionalidades
+
+<div align="center">
+
+🛠️ Ordens de Serviço
+
+🏭 Ativos
+
+🗓️ Preventiva
+
+Ciclo completo, SLA e custos
+
+Hierarquia, criticidade e histórico
+
+Planos, frequências e geração de OS
+
+📡 Preditiva & IoT
+
+📦 Estoque
+
+📊 Dashboards
+
+Telemetria e alertas
+
+Peças, depósitos e movimentações
+
+KPIs por perfil e operação
+
+📎 Evidências
+
+🔔 Auditoria
+
+💳 Gestão SaaS
+
+Checklists e anexos
+
+Histórico e notificações
+
+Planos, limites e Stripe
+
+</div>
+
+<details>
+<summary><strong>Explorar todas as funcionalidades por módulo</strong></summary>
+
+🛠️ Ordens de Serviço
 
 Abertura de OS corretivas, preventivas e preditivas
 
@@ -182,7 +318,7 @@ Histórico de mudanças de status
 
 Fluxo de revisão com atribuição de responsável
 
-Ativos e equipamentos
+🏭 Ativos e Equipamentos
 
 Cadastro de máquinas, equipamentos e componentes
 
@@ -198,7 +334,7 @@ Histórico de manutenções por equipamento
 
 Custo estimado de parada com base no valor/hora do ativo
 
-Planejamento preventivo
+🗓️ Planejamento Preventivo
 
 Criação de planos preventivos
 
@@ -212,7 +348,7 @@ Processamento por rotinas agendadas
 
 Acompanhamento de execução e vencimento
 
-Monitoramento preditivo e IoT
+📡 Monitoramento Preditivo e IoT
 
 Cadastro de configurações de monitoramento
 
@@ -226,7 +362,7 @@ Conversão de eventos críticos em ações operacionais
 
 Visão consolidada de alertas por organização
 
-Kanban operacional
+🗂️ Kanban Operacional
 
 Visualização das ordens por etapa
 
@@ -238,7 +374,7 @@ Acompanhamento de SLA e downtime
 
 Atualização de informações operacionais em tempo real
 
-Dashboards por perfil
+📊 Dashboards por Perfil
 
 Dashboard estratégico para administração
 
@@ -254,7 +390,7 @@ Visões de custos e impacto de parada
 
 Acompanhamento do volume de OS por status e período
 
-Almoxarifado e estoque
+📦 Almoxarifado e Estoque
 
 Cadastro de peças e fornecedores
 
@@ -270,7 +406,7 @@ Alertas de estoque abaixo do ponto de reposição
 
 Rastreabilidade das movimentações
 
-Evidências e checklists
+📎 Evidências e Checklists
 
 Anexos vinculados às ordens de serviço
 
@@ -282,7 +418,7 @@ Execução de checklists durante a manutenção
 
 Evidências para validação, auditoria e conformidade
 
-Relatórios
+📑 Relatórios
 
 Análise de Pareto por grupo de falha
 
@@ -296,7 +432,7 @@ Filtros por período, setor e equipamento
 
 Exportação de dados em PDF e Excel
 
-Auditoria e notificações
+🔔 Auditoria e Notificações
 
 Registro de ações críticas
 
@@ -310,7 +446,7 @@ Eventos em tempo real isolados por organização
 
 Integração opcional com canais externos de comunicação
 
-Gestão SaaS e billing
+💳 Gestão SaaS e Billing
 
 Organizações independentes na mesma plataforma
 
@@ -328,7 +464,10 @@ Histórico de transações
 
 Portal administrativo para gestão da plataforma
 
-Fluxo operacional
+</details>
+---
+
+🔄 Fluxo Operacional
 
 Identificação da necessidade
           │
@@ -390,7 +529,7 @@ FECHADA
 
 As transições respeitam regras de negócio, permissões, histórico e validações do processo.
 
-Módulos da plataforma
+🧩 Módulos da Plataforma
 
 Módulo
 
@@ -492,7 +631,7 @@ Superusuário
 
 Administração global da plataforma SaaS
 
-Indicadores de manutenção
+📈 Indicadores de Manutenção
 
 O AURIX utiliza os dados operacionais para apoiar decisões de manutenção e confiabilidade.
 
@@ -564,7 +703,9 @@ Baixa
 
 Os valores podem evoluir para configurações específicas de cada operação e contrato.
 
-Arquitetura
+<a id="arquitetura"></a>
+
+🏗️ Arquitetura
 
 ┌─────────────────────────────────────────────────────────────┐
 │                         FRONTEND                            │
@@ -628,9 +769,12 @@ Página do módulo
   ├── Cliente HTTP com interceptors
   └── Eventos em tempo real / fila offline
 
-Decisões de engenharia
+🧠 Decisões de Engenharia
 
-Arquitetura multi-tenant
+<details>
+<summary><strong>Ver decisões arquiteturais e técnicas</strong></summary>
+
+🏗️ Arquitetura multi-tenant
 
 Os dados operacionais são associados a uma organização. O tenant é extraído do contexto autenticado e aplicado às consultas, reduzindo o risco de acesso cruzado entre empresas.
 
@@ -671,7 +815,9 @@ Observabilidade
 
 A aplicação disponibiliza health checks, request IDs, logs estruturados e integrações opcionais com Sentry e Prometheus.
 
-Segurança e privacidade
+</details>
+
+🔐 Segurança e Privacidade
 
 A segurança foi tratada como parte da arquitetura da aplicação, não apenas como uma camada visual.
 
@@ -743,7 +889,7 @@ Redução de dados pessoais enviados à observabilidade
 
 Credenciais, tokens, dados de clientes, chaves privadas, arquivos .env e informações comerciais sensíveis não devem ser publicados no repositório.
 
-Perfis e controle de acesso
+👥 Perfis e Controle de Acesso
 
 A plataforma possui RBAC com perfis gerais e especializações para manutenção e produção.
 
@@ -793,7 +939,9 @@ Abertura de ocorrências e acompanhamento do setor
 
 As permissões são organizadas por recurso e ação, permitindo controles como visualizar, criar, atualizar, aprovar, baixar estoque ou gerenciar usuários.
 
-Tecnologias
+<a id="tecnologias"></a>
+
+🚀 Tecnologias
 
 Frontend
 
@@ -921,7 +1069,10 @@ Prometheus Instrumentator
 
 Métricas técnicas da API
 
-Estrutura do projeto
+📁 Estrutura do Projeto
+
+<details>
+<summary><strong>Ver organização completa de pastas</strong></summary>
 
 Saas-PCM/
 ├── backend/
@@ -991,7 +1142,13 @@ Saas-PCM/
 ├── design_guidelines.json           # Diretrizes do design system
 └── README.md
 
-Instalação local
+</details>
+
+<a id="instalacao"></a>
+
+⚙️ Instalação Local
+
+As instruções abaixo são voltadas ao ambiente de desenvolvimento. Utilize credenciais próprias, mantenha segredos fora do versionamento e revise as configurações antes de qualquer publicação em produção.
 
 Pré-requisitos
 
@@ -1040,7 +1197,10 @@ Também é possível utilizar:
 
 npm install
 
-Variáveis de ambiente
+🔧 Variáveis de Ambiente
+
+<details>
+<summary><strong>Ver exemplos de configuração do ambiente</strong></summary>
 
 Backend — backend/.env
 
@@ -1092,7 +1252,9 @@ Frontend — frontend/.env
 
 REACT_APP_BACKEND_URL=http://localhost:8001
 
-Execução e build
+</details>
+
+▶️ Execução e Build
 
 Backend em desenvolvimento
 
@@ -1142,7 +1304,7 @@ Execução do backend em produção
 
 uvicorn server:app --host 0.0.0.0 --port $PORT
 
-Testes
+🧪 Testes
 
 O backend possui testes voltados a autenticação, billing, isolamento multi-tenant, estoque, uploads, headers de segurança e regras do PCM.
 
@@ -1172,7 +1334,7 @@ AURIX_API_URL=http://localhost:8001/api python backend_test.py
 
 A quantidade de testes não representa, por si só, cobertura integral. O roadmap prevê ampliar a cobertura automatizada do frontend, dos fluxos end-to-end e das integrações externas.
 
-API e observabilidade
+📡 API e Observabilidade
 
 Documentação da API
 
@@ -1208,7 +1370,10 @@ Instrumentação preparada para Prometheus
 
 Auditoria funcional separada dos logs técnicos
 
-Deploy
+☁️ Deploy
+
+<details>
+<summary><strong>Ver orientações de publicação</strong></summary>
 
 A estrutura atual permite a publicação separada das duas camadas:
 
@@ -1248,7 +1413,11 @@ Configure backup e monitoramento do PostgreSQL
 
 Habilite observabilidade e alertas operacionais
 
-Roadmap
+</details>
+
+<a id="roadmap"></a>
+
+🗺️ Roadmap
 
 Engenharia e entrega
 
@@ -1292,7 +1461,7 @@ Evolução da análise preditiva com modelos baseados em histórico
 
 Integrações industriais adicionais via API e webhooks
 
-Competências demonstradas
+💼 Competências Demonstradas
 
 O AURIX reúne desafios típicos de um produto empresarial e demonstra experiência prática em:
 
@@ -1330,7 +1499,7 @@ Testes automatizados e validação de regras de negócio
 
 Deploy desacoplado de frontend e backend
 
-Autor
+👨‍💻 Autor
 
 <div align="center">
 
@@ -1344,7 +1513,7 @@ Aplicações empresariais · APIs · Automação de processos · Cloud · UI/UX
 
 </div>
 
-Licença e confidencialidade
+📄 Licença e Confidencialidade
 
 Este software possui licença proprietária.
 
@@ -1356,10 +1525,16 @@ Dados reais de clientes, credenciais, segredos, chaves de API e demais informaç
 
 <div align="center">
 
+<br>
+
 AURIX
 
 Manutenção inteligente. Operação confiável. Decisões orientadas por dados.
 
-Desenvolvido por Marlos Gomes.
+Desenvolvido por Marlos Gomes com foco em aplicações empresariais, automação e engenharia Full Stack.
 
-</div>
+<br>
+
+Voltar ao topo
+
+</div><img width="1600" height="520" alt="aurix-banner" src="https://github.com/user-attachments/assets/282f0a11-a049-4667-acbc-73c3cc7a39ae" />
